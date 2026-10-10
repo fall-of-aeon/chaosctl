@@ -206,3 +206,15 @@ ol.fixes pre { font-family: var(--mono); font-size: 12px; white-space: pre-wrap;
 .alerts b { color: var(--fault); font-weight: 600; white-space: nowrap; }
 .alerts .warn b { color: var(--warn); }
 .alerts .t { color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+
+/* ---------- resilience score and ranking (from `chaosctl report`) */
+.resil { display: grid; grid-template-columns: 200px minmax(0, 1.3fr) minmax(0, 1fr); gap: 24px; }
+.resil .big { font-size: 24px; font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.bars { display: grid; gap: 4px; }
+.bar-row { display: grid; grid-template-columns: minmax(120px, 45%) minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px; border-radius: 4px; }
+.bar-row:hover, .bar-row:focus-visible { background: var(--surface-2); }
+.bar-row .sub { display: block; font-size: 12px; color: var(--muted); }
+.bar-track { display: flex; align-items: center; gap: 8px; }
+.bar-track .rail { flex: 1; height: 8px; background: var(--border); border-radius: 4px; }
+.bar-track .rail i { display: block; height: 100%; background: var(--muted); border-radius: 4px; }
+.bar-track .v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; min-width: 32px; text-align: right; }

@@ -75,6 +75,23 @@ def read_degraded(path: Path, since: float, until: float) -> list[dict]:
     return out
 
 
+def find_resilience(reports: Path, only_run: str | None = None) -> dict | None:
+    """Score and ranking from the newest `chaosctl report` output (reports/<run>/findings.json or
+    reports/*findings.json). only_run: replay looks at the replayed run's own report only."""
+    if only_run:
+        files = [reports / only_run / "findings.json"]
+    else:
+        files = list(reports.glob("*findings.json")) + list(reports.glob("r*/findings.json"))
+    files = [f for f in files if f.exists()]
+    for f in sorted(files, key=lambda f: f.stat().st_mtime, reverse=True):
+        d = read_json(f)
+        if d and d.get("ranking") and d.get("overall"):
+            return {"path": str(f.relative_to(reports.parent)), "generated": f.stat().st_mtime, "source": d.get("source"),
+                    "models": d.get("models") or [], "runs": d.get("runs") or [], "overall": d["overall"],
+                    "calibrated_on": d.get("calibrated_on") or [], "ranking": d["ranking"]}
+    return None
+
+
 def run_dirs() -> list[Path]:
     """Experiment runs (r<mmdd-hhmmss>), newest first. Sorted by run id, not file time:
     `chaosctl diagnose` appends to old journals."""

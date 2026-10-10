@@ -246,3 +246,12 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   4 runs NO_IMPACT.
 - The old dashboard's resilience-score panel (from PR #1/#2) has to be ported to chaosctl/dash; its test is skipped
   with that reason until then.
+- Follow-up after the merge of origin/main (2026-10-11): ported main's "Resilience score and ranking" panel into
+  `chaosctl/dash` (`GET /api/resilience`, newest `reports/**/findings.json`; replay reads only the replayed run's
+  report) and its 8th phase step "Report and score" (done when the run is in the newest report). The brief asked for 7
+  steps; main's merged PR added the 8th, so main wins. `test_dashboard_reads_newest_report` moved to
+  `tests/test_dashboard.py`. The panel shows "No report yet" until `chaosctl report` runs.
+- E1/E2 evidence re-collected with `scripts/refresh_evidence_logs.py` (a stale postgres "No space left on device" line
+  from another session's smoke test had leaked in; originals backed up outside the repo) and re-diagnosed: both blind
+  diagnoses now come from the LLM (Mistral `ministral-14b-latest`, live API) and grade CORRECT. The page passes the
+  bundle to `grade()` so NO_IMPACT runs are labelled as such. The E1 after-recovery screenshots predate this refresh.

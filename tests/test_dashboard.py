@@ -200,7 +200,7 @@ def test_api_shapes_mid_experiment(replay_hub, monkeypatch):
     assert x["active"] and x["target"] == "n8n-worker" and x["blast_radius"] == ["n8n-main"]
     assert x["pod"] == "n8n-worker-6cd6854ff5-8nqkn"           # from the recorded Chaos Mesh event
     assert x["in_flight"]["total"] == 8
-    assert len(st["phases"]["steps"]) == 7
+    assert len(st["phases"]["steps"]) == 8
     comps = h.api_components()
     assert set(comps["nodes"]) >= {"client", "n8n-main", "n8n-worker", "redis", "postgres", "mock-api"}
     for n in comps["nodes"].values():
@@ -241,3 +241,23 @@ def test_page_has_no_fabricated_data_or_glyphs():
     emoji = re.compile("[\U0001F300-\U0001FAFF☀-➿⬀-⯿←-⇿✓✔✖✗✘]")
     for f in static.iterdir():
         assert not emoji.search(f.read_text()), f.name
+
+
+# ------------------------------------------------------------------ resilience panel (moved from test_kb_report.py)
+
+def test_dashboard_reads_newest_report(tmp_path):
+    from chaosctl import report
+    from tests.test_kb_report import make_run
+    assert sources.find_resilience(tmp_path / "reports") is None                 # no report yet
+    exps = report.load_run(make_run(tmp_path))
+    report.write(exps, tmp_path / "reports" / "r1010-163348" / "findings.md", use_llm=False)
+    r = sources.find_resilience(tmp_path / "reports")
+    assert r["path"] == "reports/r1010-163348/findings.json" and r["ranking"]["experiments"][0]["rank"] == 1
+    assert r["overall"]["score"] == r["ranking"]["experiments"][0]["score"]
+    assert sources.find_resilience(tmp_path / "reports", only_run="r9999-000000") is None
+
+
+def test_report_step_lights_up_only_when_run_is_reported():
+    ev = [{"event": "experiment_end", "ts": 1}, {"event": "inject", "ts": 0}]
+    assert model.phase_strip(ev, 2, True, True, True, reported=False)["steps"][7]["status"] == "todo"
+    assert model.phase_strip(ev, 2, True, True, True, reported=True)["steps"][7]["status"] == "done"

@@ -369,19 +369,6 @@ def test_both_report_paths_include_ranking(tmp_path):
         assert {"score", "verdict"} <= set(data["overall"])
 
 
-@pytest.mark.skip(reason="chaosctl/dashboard.py was replaced by chaosctl/dash; the resilience panel is being ported "
-                         "there by the dashboard session (then this test moves to tests/test_dashboard.py)")
-def test_dashboard_reads_newest_report(tmp_path, monkeypatch):
-    from chaosctl import dashboard
-    monkeypatch.setattr(dashboard, "ROOT", tmp_path)
-    assert dashboard.resilience() is None                                       # no report yet
-    exps = report.load_run(make_run(tmp_path))
-    report.write(exps, tmp_path / "reports" / "r1010-163348" / "findings.md", use_llm=False)
-    r = dashboard.resilience()
-    assert r["path"] == "reports/r1010-163348/findings.json" and r["ranking"]["experiments"][0]["rank"] == 1
-    assert r["overall"]["score"] == r["ranking"]["experiments"][0]["score"]
-
-
 # ------------------------------------------------------------ AI score: median of samples, calibration memory
 
 def test_ai_score_is_median_of_independent_judgements(tmp_path):

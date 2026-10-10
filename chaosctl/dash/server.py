@@ -6,6 +6,7 @@ GET /api/components        per node: derived state, pods, restarts since baselin
 GET /api/metrics?window=s  1 s points (bounded 15 min buffer)
 GET /api/events?since=ts   Kubernetes events + journal events, merged and redacted
 GET /api/agent1            Agent 1 decision card + candidates table
+GET /api/resilience        newest `chaosctl report` score and ranking (findings.json)
 GET /api/experiments/<id>  plan, guard verdict, fates, timeline, Agent 2 diagnosis (id "current" = active or last)
 GET /api/stream            Server-Sent Events, one message per collector tick (~1 s)
 POST /api/chat             unchanged RAG chat for the CLI/README (not used by the page)
@@ -60,6 +61,8 @@ def make_handler(hub: Hub):
                     return self._json(hub.api_metrics(min(900.0, max(10.0, float(arg("window", "300"))))))
                 if u.path == "/api/events":
                     return self._json(hub.api_events(float(arg("since", "0"))))
+                if u.path == "/api/resilience":
+                    return self._json(hub.api_resilience())
                 if u.path == "/api/agent1":
                     return self._json(hub.api_agent1())
                 if u.path.startswith("/api/experiments/"):

@@ -502,10 +502,12 @@ def fate_rows(summary: dict | None, rows: list[dict] | None = None) -> dict:
 
 # ------------------------------------------------------------------ phase strip
 
-PHASES = ["Map", "Baseline", "Agent 1 decides", "Inject", "Impact and auto-stop", "Recover", "Agent 2 diagnoses"]
+PHASES = ["Map", "Baseline", "Agent 1 decides", "Inject", "Impact and auto-stop", "Recover", "Agent 2 diagnoses",
+          "Report and score"]
 
 
-def phase_strip(events: list[dict], now: float, have_graph: bool, have_baseline: bool, diagnosed: bool) -> dict:
+def phase_strip(events: list[dict], now: float, have_graph: bool, have_baseline: bool, diagnosed: bool,
+                reported: bool = False) -> dict:
     """Progress indicator driven by the run journal. Status per step: done / now / todo."""
     ev = {e["event"] for e in events}
     states = [e.get("to") for e in events if e["event"] == "state"]
@@ -518,7 +520,8 @@ def phase_strip(events: list[dict], now: float, have_graph: bool, have_baseline:
             "inject" in ev,
             last_state in ("RECOVERY_WAIT", "DONE") and "inject" in ev,
             "experiment_end" in ev and "inject" in ev,
-            diagnosed]
+            diagnosed,
+            reported]   # the run is in the newest `chaosctl report` (findings.json)
     cur = None
     if warming:
         cur = 1

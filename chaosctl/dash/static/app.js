@@ -10,7 +10,7 @@ const STALE_S = 5;
 
 const S = {
   graph: null, layout: null, roles: {}, conc: {}, state: null, comps: null, points: [], events: [],
-  agent1: null, exp: null, versions: {graph: -1, agent1: null, experiment: null},
+  agent1: null, exp: null, versions: {graph: -1, agent1: null, experiment: null, resilience: null}, resil: null,
   lastData: 0, transportOk: false, es: null, pollTimer: null, needBackfill: true, polls: 0,
   win: 180, hoverT: null, selected: null, userSelected: false, hl: null,
   filters: {k8s: true, harness: true, safety: true}, eventsKey: "",
@@ -23,6 +23,7 @@ const fix = (v, d = 1) => (v == null || Number.isNaN(+v) ? DASH : (+v).toFixed(d
 const secs = (ms) => (ms == null ? DASH : (ms / 1000).toFixed(1) + " s");
 const pct = (r) => (r == null ? DASH : Math.round(r * 100) + " %");
 const nice = (s) => String(s ?? "").replaceAll("_", " ");
+const plain = (s) => String(s ?? "").replace(/\*\*|`/g, "");   // LLM text may carry Markdown markers
 const nodeOf = (ref) => String(ref || "").replace(/^node:/, "");
 const idChip = (ref) => `<span class="id" tabindex="0" data-ref="${esc(ref)}">${esc(ref)}</span>`;
 const term = (word, tip) => `<span class="term" tabindex="0" title="${esc(tip)}">${esc(word)}</span>`;
@@ -67,7 +68,7 @@ async function poll() {
     S.transportOk = true;
     S.polls += 1;
     apply({state: st, components: cp, points: mt.points, events_tail: ev.events,
-           versions: S.polls % 5 === 1 ? {graph: -2, agent1: "poll" + S.polls, experiment: "poll" + S.polls} : null});
+           versions: S.polls % 5 === 1 ? {graph: -2, agent1: "poll" + S.polls, experiment: "poll" + S.polls, resilience: "poll" + S.polls} : null});
   } catch (e) {
     S.transportOk = false;
     renderConn();
@@ -122,6 +123,7 @@ function checkVersions(v) {
   if (v.graph !== S.versions.graph) { S.versions.graph = v.graph; loadGraph(); }
   if (v.agent1 !== S.versions.agent1) { S.versions.agent1 = v.agent1; loadAgent1(); }
   if (v.experiment !== S.versions.experiment) { S.versions.experiment = v.experiment; loadExp(); }
+  if (v.resilience !== S.versions.resilience) { S.versions.resilience = v.resilience; loadResil(); }
 }
 async function loadGraph() {
   try {
@@ -131,6 +133,7 @@ async function loadGraph() {
   } catch (e) { /* shown as "graph missing" */ }
 }
 async function loadAgent1() { try { S.agent1 = await j("/api/agent1"); renderAgent1(); } catch (e) {} }
+async function loadResil() { try { S.resil = await j("/api/resilience"); renderResil(); } catch (e) {} }
 async function loadExp() { try { S.exp = await j("/api/experiments/current"); renderImpact(); renderAgent2(); } catch (e) {} }
 
 // ------------------------------------------------------------------ connection chip
@@ -176,7 +179,7 @@ function renderTop() {
   $("loadgen").textContent = lg.on ? `${lg.profile}, ${fix(lg.rate)} req/s` : (st.sources.loadgen === "no data" ? "no loadgen data" : "Load generator off");
 }
 
-const PHASE_TARGET = ["sec-map", "sec-metrics", "sec-agent1", "sec-map", "sec-impact", "sec-map", "sec-agent2"];
+const PHASE_TARGET = ["sec-map", "sec-metrics", "sec-agent1", "sec-map", "sec-impact", "sec-map", "sec-agent2", "sec-resil"];
 function renderPhases() {
   const ph = S.state.phases;
   $("phases").innerHTML = ph.steps.map((s, i) => `<li class="${s.status}"><a href="#${PHASE_TARGET[i]}" tabindex="-1">
@@ -646,14 +649,47 @@ function renderAgent2() {
   const src = d.source || {};
   el.innerHTML = `<div class="card-head"><h2>Agent 2: blind diagnosis</h2><span class="badge">not told what was injected</span>
       <span class="badge">${esc(src.text)}</span>${src.why ? `<span class="caption">${esc(src.why)}</span>` : ""}</div>
-    <div class="two"><div><h3>Reasoning</h3><ol class="steps">${d.thoughts.map((t) => `<li><span class="lbl">${esc(t.step)}</span><span>${esc(t.text)}</span></li>`).join("")}</ol></div>
-    <div><div class="rootcause"><h3>Root cause</h3><div>${esc(d.root_cause)}</div>
-      <div class="caption" style="margin-top:8px">${d.failure_chain.map((s, i) => `${i + 1}. ${esc(s)}`).join("<br>")}</div></div>
+    <div class="two"><div><h3>Reasoning</h3><ol class="steps">${d.thoughts.map((t) => `<li><span class="lbl">${esc(t.step)}</span><span>${esc(plain(t.text))}</span></li>`).join("")}</ol></div>
+    <div><div class="rootcause"><h3>Root cause</h3><div>${esc(plain(d.root_cause))}</div>
+      <div class="caption" style="margin-top:8px">${d.failure_chain.map((s, i) => `${i + 1}. ${esc(plain(s))}`).join("<br>")}</div></div>
       <h3>Recommended fixes (advisory, from the vetted playbook)</h3>
       <ol class="fixes">${d.fixes.map((f) => `<li><b>${esc(f.title)}</b><div class="meta">severity <span class="sev-${esc(f.severity)}">${esc(f.severity || DASH)}</span>, effort ${esc(f.effort || DASH)}, impact ${esc(f.impact || DASH)}</div>
-        <div>${esc(f.why)}</div><details><summary><span class="caption">runbook</span></summary><pre>${Object.entries(f.runbook).map(([k, v]) => `${k}: ${esc(v)}`).join("\n")}</pre></details></li>`).join("")}</ol>
-      ${e.grade ? `<p class="caption">Matches injected fault: ${e.grade.root_cause_correct ? "yes" : "no"} (offline check against the plan: ${esc(nice(e.grade.fault))} on ${esc(e.grade.actual_target)})</p>` : ""}
+        <div>${esc(plain(f.why))}</div><details><summary><span class="caption">runbook</span></summary><pre>${Object.entries(f.runbook).map(([k, v]) => `${k}: ${esc(v)}`).join("\n")}</pre></details></li>`).join("")}</ol>
+      ${e.grade ? `<p class="caption">Matches injected fault: ${e.grade.verdict === "NO_IMPACT" ? "not graded, the fault had no measurable impact" : e.grade.root_cause_correct ? "yes" : "no"} (offline check against the plan: ${esc(nice(e.grade.fault))} on ${esc(e.grade.actual_target)})</p>` : ""}
     </div></div>`;
+}
+
+// ------------------------------------------------------------------ resilience score (chaosctl report)
+const VERDICT_LVL = {"resilient": "none", "degraded but recovered": "warn", "fragile": "fault", "failing": "fault"};
+function bar(label, sub, value, tip) {
+  const w = value == null ? 0 : Math.max(0, Math.min(100, value));
+  return `<div class="bar-row" tabindex="0" title="${esc(tip)}" aria-label="${esc(tip)}"><div>${esc(label)}<span class="sub">${esc(sub)}</span></div>
+    <div class="bar-track"><span class="rail"><i style="width:${w}%"></i></span><span class="v">${value == null ? DASH : esc(value)}</span></div></div>`;
+}
+function renderResil() {
+  const r = S.resil, el = $("sec-resil");
+  if (!r || !r.available) {
+    el.innerHTML = `<div class="card-head"><h2>Resilience score and ranking</h2></div><div class="empty">No report yet. Run chaosctl report after an experiment.</div>`;
+    return;
+  }
+  const exps = r.ranking.experiments || [], comps = r.ranking.components || [];
+  const nCal = (r.calibrated_on || []).length;
+  const src = r.source === "llm" ? `AI score: Agent 2 (${(r.models || []).join(", ") || "model not recorded"}), median of 3 judgements, calibrated on ${nCal} earlier run${nCal === 1 ? "" : "s"}`
+    : "deterministic draft (formula), the LLM was not used";
+  const nice2 = (c) => String(c || "n/a").replaceAll("_", " ");
+  el.innerHTML = `<div class="card-head"><h2>Resilience score and ranking</h2><span class="badge">${esc(src)}</span></div>
+    <div class="resil">
+      <div><div class="caption">Overall resilience</div><div class="big">${esc(r.overall.score)}<span class="caption"> / 100</span></div>
+        <span class="state lvl-${VERDICT_LVL[r.overall.verdict] || "none"}"><span class="dot"></span>${esc(r.overall.verdict || "not scored")}</span>
+        <p class="caption">${exps.length} experiment${exps.length === 1 ? "" : "s"}, runs ${esc((r.runs || []).join(", "))}<br>report <span class="mono">${esc(r.path)}</span>, ${clock(r.generated)}</p></div>
+      <div><h3>Experiments, least resilient first <span class="caption">(score 0-100)</span></h3><div class="bars">${exps.map((e) =>
+        bar(`${e.rank ? e.rank + ". " : ""}${e.alias ? e.alias + " " : ""}${e.title} on ${e.target || "?"}`, `${e.verdict || "not scored"}, weakest: ${nice2(e.weakest)}`, e.score,
+            `${e.exp_ref}: target ${e.target || "?"}, status ${e.status || "?"}, score ${e.score ?? "n/a"} of 100, ${e.verdict || "not scored"}, weakest component ${nice2(e.weakest)}`)).join("")}</div></div>
+      <div><h3>Weakest components <span class="caption">(mean over experiments, 0-100)</span></h3><div class="bars">${comps.map((c) =>
+        bar(nice2(c.component), `weight ${Math.round(c.weight * 100)} %, ${c.n} scored`, c.mean,
+            `${nice2(c.component)}: mean ${c.mean ?? "n/a"} of 100, weight ${Math.round(c.weight * 100)} % of the total, ${c.n} experiments scored`)).join("")}</div></div>
+    </div>
+    <p class="caption">Agent 2 judges each component 0-100 from the evidence (formula score as a reference). Total = weighted mean: availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 %. Reasons per component are in the findings report.</p>`;
 }
 
 // ------------------------------------------------------------------ event log
@@ -705,6 +741,7 @@ function render() {
   renderEvents();
   if (!S.agent1) renderAgent1();
   if (!S.exp) { renderImpact(); renderAgent2(); }
+  if (!S.resil) renderResil();
   return c;
 }
 setInterval(renderConn, 1000);   // the chip ages even when no message arrives

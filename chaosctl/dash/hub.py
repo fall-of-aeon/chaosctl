@@ -13,7 +13,7 @@ from collections import deque
 from pathlib import Path
 
 from chaosctl.dash import model
-from chaosctl.dash.sources import GRAPH_JSON, REPORTS, ROOT, STATE, load_catalog, profile_name, read_json
+from chaosctl.dash.sources import GRAPH_JSON, REPORTS, ROOT, STATE, find_resilience, load_catalog, profile_name, read_json
 
 HISTORY_POINTS = 900          # 15 min at 1 Hz
 EVENT_LIMIT = 600
@@ -91,7 +91,7 @@ class Hub(threading.Thread):
         self.points: deque = deque(maxlen=HISTORY_POINTS)
         self.events: list[dict] = []
         self.subscribers: list[queue.Queue] = []
-        self.versions = {"graph": 0, "agent1": "", "experiment": ""}
+        self.versions = {"graph": 0, "agent1": "", "experiment": "", "resilience": ""}
         self.graph: dict | None = None
         self.graph_source = "missing"
         self.graph_built = None
@@ -558,7 +558,10 @@ class Hub(threading.Thread):
         state_name = (exp or {}).get("state") if active else ("LOCKED" if flags.get("locked") else "IDLE")
         lx = exp or last
         diag_done = bool(lx and self._file(REPORTS / lx["run_id"] / "evidence" / f"{lx['id']}.diagnosis.json", t))
-        phases = model.phase_strip(ev, t, self.graph is not None, ctx.get("baseline") is not None, diag_done)
+        resil = self._every("resilience", 10, t, lambda: self._resilience(t))
+        self.versions["resilience"] = f"{(resil or {}).get('path')}:{(resil or {}).get('generated')}"
+        reported = bool(resil and ctx.get("run_id") in (resil.get("runs") or []))
+        phases = model.phase_strip(ev, t, self.graph is not None, ctx.get("baseline") is not None, diag_done, reported)
         srcs = {
             "cluster": "ok" if pods is not None else ("not recorded" if self.src.mode == "replay" else "unreachable"),
             "cluster_error": None if pods is not None else self.src.cluster_error,
@@ -712,8 +715,17 @@ class Hub(threading.Thread):
                                 "failure_chain": [model.redact(s) for s in diag.get("failure_chain") or []],
                                 "detectors": diag.get("detectors") or [], "fixes": fixes}
             if plan_file:
-                out["grade"] = grade(diag, plan_file)
+                out["grade"] = grade(diag, plan_file, evid or None)
         return out
+
+    def _resilience(self, t: float) -> dict | None:
+        if self.src.mode == "replay":
+            return find_resilience(REPORTS, self.src.run_id) if self._file(self.src.dir / "findings.json", t) else None
+        return find_resilience(REPORTS)
+
+    def api_resilience(self) -> dict:
+        r = self._resilience(self.src.now())
+        return {"available": r is not None, **(r or {})}
 
     # ---------------------------------------------------------------- SSE
     def subscribe(self) -> queue.Queue:
