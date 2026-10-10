@@ -230,3 +230,19 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
 - Degraded banner (alerts.py records + dashboard blind spots) added at the catalog session's request.
 - Not done: loadgen-off-within-10 s check was not timed separately (the off state renders "Load generator off" with "-"
   values, seen in the after-recovery screenshots); W3 is not shown because the graph no longer has it.
+
+## Catalog merged with the knowledge base (2026-10-11, branch error-catalog)
+- Merged origin/main (PR #1 knowledge base + AI report, PR #2 AI resilience score) into the catalog work. Hypotheses
+  moved from code into `chaosctl/knowledge/<fault>.yaml`; the strict grader now takes each fault's words from its
+  knowledge file.
+- **18 new knowledge files** (15 enabled faults + 3 disabled), aliases E3-E11; `chaosctl kb`: "knowledge base consistent"
+  (22 catalog faults, 22 knowledge files).
+- **5 new detectors**: `sync_errors`, `ingress_down`, `queue_backlog`, `db_errors`, `downstream_errors`; signatures for
+  the new faults (ingress down > database > downstream errors > queue backlog > sync errors > latency only).
+- **7 new playbook fixes** (17 total): http_retry_backoff, http_timeout_budget, db_connection_pooling,
+  disk_usage_alert, autoscale_workers, webhook_processors, postgres_ha.
+- Agent 2 with the real LLM on the 8 saved runs: **2 of 4 runs with impact correct** (was 1 of 4): mockapi_http_500 now
+  CORRECT, worker_container_kill CORRECT; traffic_spike ("workers were overloaded") and packet_loss on redis MISSED;
+  4 runs NO_IMPACT.
+- The old dashboard's resilience-score panel (from PR #1/#2) has to be ported to chaosctl/dash; its test is skipped
+  with that reason until then.

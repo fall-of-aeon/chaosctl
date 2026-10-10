@@ -1,0 +1,17 @@
+# Knowledge for catalog fault worker_clock_skew (format: docs/KNOWLEDGE_BASE.md)
+fault: worker_clock_skew
+title: Worker clock skew (disabled)
+category: time
+summary: 'TimeChaos shifts one worker''s clock by 2 minutes for 45 s. Disabled: flaky ptrace injection into Node.js.'
+hypothesis: a skewed worker clock makes Bull treat locks as expired, causing duplicate executions
+symptoms:
+  expected: []
+  possible:
+  - duplicates
+  - lost_work
+grading_keywords:
+- clock
+- time skew
+related_fixes:
+- stalled_job_tuning
+- idempotency_keys

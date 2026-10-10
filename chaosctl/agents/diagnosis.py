@@ -47,7 +47,14 @@ class Diagnosis(BaseModel):
 # Every id detect() can emit. Knowledge files and playbook.yaml refer to these.
 DETECTOR_IDS = {"consumers_down", "queue_unreachable", "queue_state_lost", "latency_degradation",
                 "silent_async_failure", "backlog_not_drained", "lost_work", "duplicates", "phantom_success",
-                "dependency_restart", "detectability_gap"}
+                "dependency_restart", "detectability_gap",
+                "sync_errors", "ingress_down", "queue_backlog", "db_errors", "downstream_errors"}
+
+# log evidence (already limited to the experiment window by the runner); lower-cased substrings
+DB_ERROR_WORDS = ("no space left on device", "could not extend file", "too many clients", "remaining connection slots",
+                  "connection terminated", "database system is shutting down", "database system is in recovery",
+                  "econnrefused 10.", ":5432", "postgres")
+DOWNSTREAM_ERROR_WORDS = ("status code 5", "socket hang up", "econnreset", "mock-api", "request failed with status")
 
 def blind(b: dict) -> dict:
     """Strip anything that names the injector (Chaos Mesh events/objects) so the diagnosis stays blind."""
@@ -110,6 +117,29 @@ def detect(b: dict) -> list[dict]:
     rs = b.get("restarts_delta") or {}
     if rs.get("n8n-main"):
         hits.append({"id": "dependency_restart", "severity": "High", "detail": f"n8n-main restarted {rs['n8n-main']}x"})
+    w1_n = sum((s.get("w1") or {}).get("n", 0) for s in after)
+    if w1_err >= 3 and w1_n and w1_err / w1_n >= 0.1:
+        hits.append({"id": "sync_errors", "severity": "High" if w1_err / w1_n >= 0.3 else "Medium",
+                     "detail": f"{w1_err} of {w1_n} W1 requests failed after the start ({w1_err / w1_n:.0%})"})
+    w2_bad = [s for s in after if (s.get("w2") or {}).get("n") and ((s.get("w2") or {}).get("success_rate") or 0) < 0.5]
+    if len(w2_bad) >= 2:
+        hits.append({"id": "ingress_down", "severity": "Critical",
+                     "detail": f"W2 webhooks failed too in {len(w2_bad)} samples: requests were not even accepted"})
+    busy = [s for s in after if q(s, "reachable") and (q(s, "active") or 0) > 0 and (q(s, "wait") or 0) > b_wait + 20]
+    if len(busy) >= 3:
+        hits.append({"id": "queue_backlog", "severity": "Medium",
+                     "detail": f"waiting jobs rose to {max(q(s, 'wait') or 0 for s in busy)} while workers were busy "
+                               f"(active up to {max(q(s, 'active') or 0 for s in busy)}): demand exceeded throughput"})
+    logs = b.get("logs") or {}
+    db_lines = [ln for v in logs.values() for ln in v if any(w in ln.lower() for w in DB_ERROR_WORDS)
+                and any(e in ln.lower() for e in ("error", "fatal", "panic", "refused", "space", "too many"))]
+    if db_lines:
+        hits.append({"id": "db_errors", "severity": "High",
+                     "detail": f"{len(db_lines)} database error log lines, e.g. {db_lines[0][:120]!r}"})
+    ds_lines = [ln for v in logs.values() for ln in v if any(w in ln.lower() for w in DOWNSTREAM_ERROR_WORDS)]
+    if ds_lines:
+        hits.append({"id": "downstream_errors", "severity": "Medium",
+                     "detail": f"{len(ds_lines)} downstream HTTP error log lines, e.g. {ds_lines[0][:120]!r}"})
     main_unready = [s for s in after if (s.get("pods") or {}).get("n8n-main", {}).get("ready") is False]
     if (zero_active or down) and not main_unready:
         hits.append({"id": "detectability_gap", "severity": "Medium",

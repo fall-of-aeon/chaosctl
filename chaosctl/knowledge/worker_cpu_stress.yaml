@@ -1,0 +1,17 @@
+# Knowledge for catalog fault worker_cpu_stress (format: docs/KNOWLEDGE_BASE.md)
+fault: worker_cpu_stress
+title: Worker CPU stress (disabled)
+category: load
+summary: 'StressChaos burns CPU in one worker for 60 s. Disabled: broken on Kind with cgroup v2 (docs/FACTS.md).'
+hypothesis: W1 p95 rises on the stressed worker but no request fails and the queue drains after
+symptoms:
+  expected:
+  - latency_degradation
+  possible:
+  - queue_backlog
+grading_keywords:
+- cpu
+- worker
+related_fixes:
+- scale_workers
+- autoscale_workers

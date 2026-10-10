@@ -51,12 +51,17 @@ is never told which fault was injected; grading happens only afterwards.
 
 Current detector ids: `consumers_down`, `queue_unreachable`, `queue_state_lost`, `latency_degradation`,
 `silent_async_failure`, `backlog_not_drained`, `lost_work`, `duplicates`, `phantom_success`,
-`dependency_restart`, `detectability_gap`. A new fault whose symptoms none of these catch needs a new detector
+`dependency_restart`, `detectability_gap`, and (2026-10-11, for the new faults) `sync_errors` (≥ 10 % of W1 requests
+failed), `ingress_down` (W2 webhooks refused too), `queue_backlog` (waiting jobs grew while workers were busy),
+`db_errors` and `downstream_errors` (from the experiment-window logs).
+
+Grading is strict: whole words in the root cause only, and the first component it names (or one of the fault's
+`grading_keywords`, if that comes first) must be the injected target. So `grading_keywords` should describe the
+fault's nature ("traffic", "packet loss", "disk full"), not generic words like "latency" that fit every fault. A new fault whose symptoms none of these catch needs a new detector
 in `diagnosis.py` (add its id to `DETECTOR_IDS`) and, ideally, a playbook fix that `addresses` it.
 
-Note for faults that are not Chaos Mesh pod faults (e.g. a load spike): the runner currently injects only through
-Chaos Mesh and assumes a target pod. Such faults need an executor in the runner; the knowledge base, score and
-report already handle them.
+Faults that are not Chaos Mesh faults have executors too: `driver: job` (a Kubernetes Job from an allow-listed image,
+e.g. pgbench or the disk ballast) and `driver: loadgen` (the traffic spike). See README 2.6.
 
 ## Findings report (AI-written)
 `uv run chaosctl report` (newest run), `--run <id>` (repeatable) or `--all`. Writes `reports/<run>/findings.md`

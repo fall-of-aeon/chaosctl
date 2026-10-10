@@ -1,0 +1,29 @@
+# Knowledge for catalog fault mockapi_http_abort (format: docs/KNOWLEDGE_BASE.md)
+fault: mockapi_http_abort
+title: Mock API connection abort
+category: dependency_errors
+summary: Chaos Mesh aborts every request to the mock API's /work for 30 s (connection reset).
+hypothesis: W1 requests fail fast with a connection error; the worker stays healthy
+symptoms:
+  expected:
+  - sync_errors
+  possible:
+  - downstream_errors
+  - silent_async_failure
+  - lost_work
+signature:
+  any_of: []
+  all_of:
+  - sync_errors
+  root_cause: 'Synchronous requests failed while the queue and the workers stayed healthy: a dependency on the request
+    path (downstream HTTP service or database) returned errors.'
+  priority: 5
+grading_keywords:
+- mock-api
+- mock
+- downstream
+- connection reset
+- aborted
+related_fixes:
+- http_retry_backoff
+- async_status_callback

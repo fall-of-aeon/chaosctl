@@ -1,0 +1,18 @@
+# Knowledge for catalog fault postgres_latency (format: docs/KNOWLEDGE_BASE.md)
+fault: postgres_latency
+title: Postgres latency
+category: network
+summary: Chaos Mesh adds 100 ms or 1 s of network delay to everything Postgres sends for 45 s.
+hypothesis: execution saves slow down, so W1 p95 rises; W2 responds as soon as the job is queued
+symptoms:
+  expected:
+  - latency_degradation
+  possible:
+  - queue_backlog
+  - silent_async_failure
+grading_keywords:
+- postgres
+- database
+related_fixes:
+- db_connection_pooling
+- http_timeout_budget

@@ -1,0 +1,16 @@
+# Knowledge for catalog fault worker_memory_stress (format: docs/KNOWLEDGE_BASE.md)
+fault: worker_memory_stress
+title: Worker memory stress (disabled)
+category: load
+summary: 'StressChaos fills 256-512 MB of memory in one worker for 45 s. Disabled: broken on Kind with cgroup v2.'
+hypothesis: the worker slows under memory pressure but is not OOM-killed (no limits set)
+symptoms:
+  expected:
+  - latency_degradation
+  possible:
+  - lost_work
+grading_keywords:
+- memory
+- worker
+related_fixes:
+- scale_workers

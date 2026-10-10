@@ -1,0 +1,33 @@
+# Knowledge for catalog fault mockapi_http_500 (format: docs/KNOWLEDGE_BASE.md)
+fault: mockapi_http_500
+alias: E5
+title: Mock API returns HTTP 500/503
+category: dependency_errors
+summary: Chaos Mesh rewrites the mock API's responses on /work to HTTP 500 (30 s) or 503 (60 s).
+hypothesis: W1 requests in flight get errors (no retry on the HTTP node) while W2 still returns 200; failed executions
+  are recorded in postgres
+symptoms:
+  expected:
+  - sync_errors
+  - silent_async_failure
+  possible:
+  - downstream_errors
+  - lost_work
+signature:
+  any_of:
+  - downstream_errors
+  all_of: []
+  root_cause: 'The downstream HTTP service (mock-api) returned errors, so executions failed: W1 clients got errors
+    while W2 clients were still told 200 OK.'
+  priority: 12
+grading_keywords:
+- mock-api
+- mock
+- downstream
+- http 500
+- http 503
+- 5xx
+- upstream
+related_fixes:
+- http_retry_backoff
+- async_status_callback

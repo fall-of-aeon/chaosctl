@@ -1,0 +1,31 @@
+# Knowledge for catalog fault postgres_pod_kill (format: docs/KNOWLEDGE_BASE.md)
+fault: postgres_pod_kill
+alias: E11
+title: Postgres pod kill
+category: dependency_loss
+summary: 'Delete the single Postgres pod: nothing can be saved until it restarts and recovers.'
+hypothesis: 'executions cannot be saved: in-flight W1 requests fail and workers log DB errors until postgres is
+  back; queued jobs resume after'
+symptoms:
+  expected:
+  - sync_errors
+  - db_errors
+  possible:
+  - lost_work
+  - silent_async_failure
+  - dependency_restart
+  - phantom_success
+signature:
+  any_of:
+  - db_errors
+  all_of: []
+  root_cause: The Postgres database failed or refused writes (database errors in the logs), so executions could
+    not be saved.
+  priority: 15
+grading_keywords:
+- postgres
+- database
+related_fixes:
+- postgres_ha
+- idempotency_keys
+- async_status_callback

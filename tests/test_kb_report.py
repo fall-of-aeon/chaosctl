@@ -122,7 +122,8 @@ def test_blind_fallback_root_cause_comes_from_kb_signatures():
     hits = [{"id": "queue_unreachable", "severity": "Critical", "detail": "x"},
             {"id": "consumers_down", "severity": "High", "detail": "y"}]
     assert "Redis" in d.fallback(hits).root_cause  # higher priority signature wins
-    assert "single clear cause" in d.fallback([{"id": "latency_degradation", "severity": "High", "detail": "z"}]).root_cause
+    assert "slowed down" in d.fallback([{"id": "latency_degradation", "severity": "High", "detail": "z"}]).root_cause
+    assert "single clear cause" in d.fallback([{"id": "duplicates", "severity": "High", "detail": "z"}]).root_cause  # no signature
 
 
 def test_grade_uses_kb_keywords():

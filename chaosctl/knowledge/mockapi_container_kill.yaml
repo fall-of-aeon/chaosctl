@@ -1,0 +1,22 @@
+# Knowledge for catalog fault mockapi_container_kill (format: docs/KNOWLEDGE_BASE.md)
+fault: mockapi_container_kill
+title: Mock API container kill
+category: dependency_loss
+summary: Kill the mock downstream API container in place; calls to it are refused until it restarts (seconds).
+hypothesis: W1 requests in flight on the mock fail (connection reset/refused) until the container is back a few
+  seconds later; n8n records failed executions
+symptoms:
+  expected:
+  - sync_errors
+  possible:
+  - downstream_errors
+  - silent_async_failure
+  - lost_work
+grading_keywords:
+- mock-api
+- mock
+- downstream
+- connection refused
+related_fixes:
+- http_retry_backoff
+- async_status_callback

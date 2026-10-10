@@ -1,0 +1,27 @@
+# Knowledge for catalog fault postgres_overload (format: docs/KNOWLEDGE_BASE.md)
+fault: postgres_overload
+alias: E7
+title: Postgres overload
+category: load
+summary: 'A pgbench Job loads the n8n database: 4 or 8 CPU-heavy clients, or 85 of the 100 connections held, for
+  45 s.'
+hypothesis: 'queries and execution saves slow down (CPU) or new connections are refused (held connections): W1 p95
+  rises or W1 fails; W2 keeps returning 200 while work backs up'
+symptoms:
+  expected:
+  - latency_degradation
+  possible:
+  - sync_errors
+  - db_errors
+  - queue_backlog
+  - silent_async_failure
+  - lost_work
+grading_keywords:
+- postgres
+- database
+- overload
+- connection exhaustion
+- too many clients
+related_fixes:
+- db_connection_pooling
+- postgres_ha
