@@ -1,0 +1,34 @@
+# Knowledge for catalog fault traffic_spike (format: docs/KNOWLEDGE_BASE.md)
+fault: traffic_spike
+alias: E3
+title: Traffic spike
+category: load
+summary: Our load generator raises webhook traffic from 2 to 6 or 10 requests/s for 60 s.
+hypothesis: the queue grows faster than the workers drain it; W1 p95 climbs toward the 30 s timeout and the backlog
+  drains only after the spike ends
+symptoms:
+  expected:
+  - queue_backlog
+  - latency_degradation
+  possible:
+  - silent_async_failure
+  - backlog_not_drained
+  - sync_errors
+signature:
+  any_of:
+  - queue_backlog
+  all_of: []
+  root_cause: 'Demand exceeded worker throughput: jobs piled up in the queue while every worker was busy (a load
+    spike or slower processing per job).'
+  priority: 8
+grading_keywords:
+- traffic
+- load spike
+- spike
+- burst
+- request rate
+- demand
+related_fixes:
+- autoscale_workers
+- scale_workers
+- queue_depth_alert

@@ -51,12 +51,17 @@ is never told which fault was injected; grading happens only afterwards.
 
 Current detector ids: `consumers_down`, `queue_unreachable`, `queue_state_lost`, `latency_degradation`,
 `silent_async_failure`, `backlog_not_drained`, `lost_work`, `duplicates`, `phantom_success`,
-`dependency_restart`, `detectability_gap`. A new fault whose symptoms none of these catch needs a new detector
+`dependency_restart`, `detectability_gap`, and (2026-10-11, for the new faults) `sync_errors` (≥ 10 % of W1 requests
+failed), `ingress_down` (W2 webhooks refused too), `queue_backlog` (waiting jobs grew while workers were busy),
+`db_errors` and `downstream_errors` (from the experiment-window logs).
+
+Grading is strict: whole words in the root cause only, and the first component it names (or one of the fault's
+`grading_keywords`, if that comes first) must be the injected target. So `grading_keywords` should describe the
+fault's nature ("traffic", "packet loss", "disk full"), not generic words like "latency" that fit every fault. A new fault whose symptoms none of these catch needs a new detector
 in `diagnosis.py` (add its id to `DETECTOR_IDS`) and, ideally, a playbook fix that `addresses` it.
 
-Note for faults that are not Chaos Mesh pod faults (e.g. a load spike): the runner currently injects only through
-Chaos Mesh and assumes a target pod. Such faults need an executor in the runner; the knowledge base, score and
-report already handle them.
+Faults that are not Chaos Mesh faults have executors too: `driver: job` (a Kubernetes Job from an allow-listed image,
+e.g. pgbench or the disk ballast) and `driver: loadgen` (the traffic spike). See README 2.6.
 
 ## Findings report (AI-written)
 `uv run chaosctl report` (newest run), `--run <id>` (repeatable) or `--all`. Writes `reports/<run>/findings.md`
@@ -90,10 +95,24 @@ weakest component, plus the five components ranked weakest first by their mean o
 "Resilience score and ranking" panel shows the newest `findings.json`. No fix needs to be applied: the ranking compares
 faults against the same, unfixed system (before/after a fix is the on-hold Agent 3 idea).
 
-## Resilience score
-Agent 2 scores each component using this rubric (also given to it verbatim, see `RUBRIC` in reporter.py):
+## Resilience score (AI-judged, formula as reference)
+The resilience score shown in the report and on the dashboard is **Agent 2's judgement**
+(`chaosctl/agents/reporter.py`, `judge_scores`):
 
-| | Component (weight) | What it judges |
+1. **Evidence:** Agent 2 gets the experiment's measured facts (timeline, order fates, latency, queue, restarts,
+   detectors) and scores each component 0-100 with a reason that cites the numbers.
+2. **Reference, not rule:** it also gets the formula score (`chaosctl/score.py`) as a reference. It may depart from
+   it, but must say why in the reason.
+3. **Calibration on real runs:** every experiment Agent 2 scores is stored in `state/score_memory.jsonl`. When it
+   scores a new one, the most similar earlier judgements (same fault first, then most recent) are shown to it as
+   calibration examples, so its scoring stays consistent as real experiments accumulate. This is in-context
+   calibration, not model training: there is far too little data to fine-tune a model, and none is needed.
+4. **Stability:** it scores each experiment 3 times independently (different seeds, temperature 0.5) and the median
+   per component is used. The report shows the spread between the judgements.
+5. **Arithmetic in code:** the total is the weighted mean of the median component scores (weights in
+   `chaosctl/scoring.yaml`); the overall score is the mean of the experiments. Small models get weighted sums wrong.
+
+| | Component (weight) | What Agent 2 judges |
 |---|---|---|
 | A | availability (30 %) | share of W1 requests that succeeded after injection |
 | S | self-recovery (25 %) | recovered without help, and how fast (~30 s excellent; watchdog restart poor; LOCKED 0) |
@@ -101,12 +120,15 @@ Agent 2 scores each component using this rubric (also given to it verbatim, see 
 | D | data integrity (15 %) | share of in-flight orders completed exactly once |
 | M | detectability (10 %) | did health checks show the problem (green during an outage = 0) |
 
-Total = weighted mean of the non-null components (weights in `chaosctl/scoring.yaml`). Bands: ≥ 85 resilient,
-≥ 70 degraded but recovered, ≥ 50 fragile, below failing.
+Bands: ≥ 85 resilient, ≥ 70 degraded but recovered, ≥ 50 fragile, below failing. Every component's reason, the
+reference value and the measured evidence are side by side in the report, so each number is traceable; a note
+appears when Agent 2's total differs from the reference by more than 20 points.
 
-`chaosctl/score.py` computes the same components with fixed formulas. It is used for the deterministic draft and
-as a cross-check: findings.json always records it, and the report shows a note when it differs from Agent 2's
-score by more than 20 points. Formulas: A = successful/all W1 responses; S = 100 within 30 s → 70 at the deadline,
-60 if SLIs never recovered, 40 watchdog restart, 0 LOCKED; L = 100 at ≤ 1.5× baseline p95 → 0 at the abort limit;
-D = completed once / in-flight; M = 0 if `detectability_gap`, 100 if a consumer/queue outage was visible, else n/a.
-The score compares experiments on this testbed; it is not a certified reliability measure.
+**Reference formulas** (`score.py`; also the score of the deterministic draft when Mistral is unavailable):
+A = successful/all W1 responses; S = 100 within 30 s → 70 at the deadline, 60 if SLIs never recovered, 40 watchdog
+restart, 0 LOCKED; L = 100 at ≤ 1.5× baseline p95 → 0 at the abort limit; D = completed once / in-flight; M = 0 if
+`detectability_gap`, 100 if a consumer/queue outage was visible, else n/a. A component without data is n/a and the
+other weights are rescaled. The score is a judgement on this testbed, not a certified reliability measure.
+
+Measured on two synthetic runs: worker kill 49.0 (reference 48.7, all three judgements equal); Redis kill 37.8
+(reference 42.8; self-recovery judged 40/40/60 → 40 because SLIs never returned and two pods restarted).

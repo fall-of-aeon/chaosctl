@@ -1,0 +1,25 @@
+# Knowledge for catalog fault postgres_disk_full (format: docs/KNOWLEDGE_BASE.md)
+fault: postgres_disk_full
+alias: E8
+title: Postgres disk full
+category: resource_exhaustion
+summary: A Job fills the real (512 MiB) Postgres disk with a ballast file for 40 s, leaving 4 MiB or nothing free.
+hypothesis: 'postgres cannot write WAL: execution saves fail, postgres may PANIC and restart, W1 fails while W2
+  still says 200; it recovers once the ballast is removed'
+symptoms:
+  expected:
+  - db_errors
+  possible:
+  - sync_errors
+  - lost_work
+  - silent_async_failure
+  - latency_degradation
+grading_keywords:
+- disk full
+- no space left
+- disk
+- postgres
+- database
+related_fixes:
+- disk_usage_alert
+- postgres_ha

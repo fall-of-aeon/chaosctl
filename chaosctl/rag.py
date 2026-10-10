@@ -16,7 +16,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
-from chaosctl import llm
+from chaosctl import alerts, llm
 
 ROOT = Path(__file__).parents[1]
 TOKEN = re.compile(r"[a-z0-9]+")
@@ -122,14 +122,17 @@ SOURCES:
 {"CONVERSATION SO FAR:" + chr(10) + prev if prev else ""}
 QUESTION: {question}"""
     valid = {h["id"] for h in hits}
+    meta: dict = {}
     try:
         llm.budget.used = 0  # chat is interactive: budget is per question, not per campaign
-        a = llm.generate_json("rag_chat", prompt, Answer)
+        a = llm.generate_json("rag_chat", prompt, Answer, meta=meta)
         cited = [c for c in a.cited if c in valid] or [hits[0]["id"]]
-        return {"answer": a.answer, "sources": [_src(h) for h in hits if h["id"] in cited], "source": "mistral"}
+        return {"answer": a.answer, "sources": [_src(h) for h in hits if h["id"] in cited],
+                "source": f"llm:{meta.get('source', '?')}:{meta.get('model', '?')}", "llm_used": True}
     except llm.LLMUnavailable as exc:
-        return {"answer": "Mistral is unavailable, so here are the most relevant records I found:",
-                "sources": [_src(h) for h in hits[:4]], "source": f"fallback: {exc}"}
+        alerts.llm_fallback("Ask Agent 2 (chat)", f"{exc} -> showing retrieved records only, no generated answer")
+        return {"answer": f"⚠ The LLM was NOT used ({exc}). These are only the most relevant records I found:",
+                "sources": [_src(h) for h in hits[:4]], "source": f"fallback: {exc}", "llm_used": False}
 
 
 def _src(h: dict) -> dict:

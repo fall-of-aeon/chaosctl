@@ -1,0 +1,27 @@
+# Knowledge for catalog fault worker_container_kill (format: docs/KNOWLEDGE_BASE.md)
+fault: worker_container_kill
+alias: E9
+title: Worker container kill
+category: compute_loss
+summary: Kill the n8n-worker container in place (same pod, restart count +1) while executions are running.
+hypothesis: the worker container restarts in place (restart count +1); its active jobs stall until lock expiry and
+  are redelivered; W1 p95 rises, the other worker keeps going
+symptoms:
+  expected:
+  - lost_work
+  possible:
+  - latency_degradation
+  - silent_async_failure
+  - duplicates
+  - phantom_success
+  - sync_errors
+grading_keywords:
+- worker
+- consumer
+- container restart
+- crash
+related_fixes:
+- graceful_shutdown
+- idempotency_keys
+- async_status_callback
+- scale_workers

@@ -2,8 +2,12 @@
 
 Same pattern as the other agents: the LLM writes and judges, deterministic validators check that every
 cited id exists, fixes come from the playbook and scores are well-formed, and a fact-check traces every
-number in the text back to the measurements. Invalid output is retried once with the errors as feedback.
+number in the text back to the measurements. Invalid output is retried with the errors as feedback.
 Unlike the blind diagnosis, this runs after the fact and is told what was injected.
+
+The resilience score is Agent 2's judgement: it scores each component from the evidence, with the formula
+score (score.py) as a reference it may depart from with a reason, calibrated on its earlier real judgements
+(score_memory.py). It scores SAMPLES times independently and the median per component is used.
 """
 from __future__ import annotations
 
@@ -33,6 +37,8 @@ SEVERITIES = ["Critical", "High", "Medium", "Low"]
 GENERIC_EVIDENCE = ["trace", "fates", "timeline", "baseline", "agent1_plan", "guard", "agent2_diagnosis", "knowledge"]
 TIMEOUT_S = 90
 ATTEMPTS = 3            # first answer + up to 2 corrections
+SAMPLES = 3             # independent scorings per experiment; the median per component is the final score
+SAMPLE_TEMPERATURE = 0.5  # enough randomness that the samples really are independent judgements
 RUBRIC = """Score each component 0-100 (higher = more resilient), or null if the facts cannot support a score:
 - availability: share of W1 (sync) requests that succeeded after injection
 - self_recovery: did the system recover without help, and how fast (SLIs back within ~30 s is excellent; needing
@@ -40,6 +46,9 @@ RUBRIC = """Score each component 0-100 (higher = more resilient), or null if the
 - latency: how far peak W1 p95 rose above baseline relative to the abort limit
 - data_integrity: share of in-flight orders that completed exactly once (lost, duplicated, phantom are failures)
 - detectability: whether health checks/readiness showed the problem (green health checks during an outage = 0)
+You get the formula score as a REFERENCE and earlier experiments you scored as CALIBRATION examples. Judge from
+the evidence: follow the reference where it is fair, depart from it where the evidence shows it misjudges the
+component, and then say why in the reason. Stay consistent with how you scored similar past experiments.
 Weights (the harness computes the weighted total from your component scores): """ + ", ".join(
     f"{k} {v:.0%}" for k, v in SCORE_CONFIG["weights"].items()) + "."
 
@@ -65,16 +74,37 @@ class ExperimentReport(BaseModel):
     recovery: str
     root_cause: str = Field(description="root cause; say whether the blind diagnosis was right")
     evidence: list[str] = Field(description="ids from ALLOWED EVIDENCE IDS that support the analysis")
+
+
+class ScoreJudgement(BaseModel):
+    exp_ref: str
     scores: list[ComponentScore]
 
-    def total(self) -> int | None:
-        """Weighted mean of the AI's component scores (arithmetic only; the judgement is in the components)."""
-        present = [(SCORE_CONFIG["weights"].get(c.component, 0), c.score) for c in self.scores if c.score is not None]
-        weight = sum(w for w, _ in present)
-        return round(sum(w * s for w, s in present) / weight) if weight else None
 
-    def verdict(self) -> str:
-        return band(self.total())
+def weighted_total(scores: dict[str, float | None]) -> float | None:
+    """Weighted mean of the non-null component scores (arithmetic only; the judgement is in the components)."""
+    present = [(SCORE_CONFIG["weights"][k], v) for k, v in scores.items() if v is not None]
+    weight = sum(w for w, _ in present)
+    return round(sum(w * v for w, v in present) / weight, 1) if weight else None
+
+
+def median_judgement(samples: list[ScoreJudgement]) -> dict:
+    """Median per component over the independent samples; the reason comes from the sample closest to it."""
+    comps = {}
+    for name in COMPONENTS:
+        vals = [c for j in samples for c in j.scores if c.component == name]
+        nums = sorted(c.score for c in vals if c.score is not None)
+        if len(nums) * 2 <= len(vals):          # most samples say "no data"
+            comps[name] = {"score": None, "reason": next((c.reason for c in vals if c.score is None), ""), "samples": []}
+            continue
+        mid = nums[len(nums) // 2] if len(nums) % 2 else (nums[len(nums) // 2 - 1] + nums[len(nums) // 2]) / 2
+        best = min((c for c in vals if c.score is not None), key=lambda c: abs(c.score - mid))
+        comps[name] = {"score": mid, "reason": best.reason, "samples": nums}
+    total = weighted_total({k: c["score"] for k, c in comps.items()})
+    totals = [weighted_total({c.component: c.score for c in j.scores}) for j in samples]
+    totals = [t for t in totals if t is not None]
+    return {"total": total, "verdict": band(total), "components": comps, "samples": len(samples),
+            "spread": round(max(totals) - min(totals), 1) if totals else None}
 
 
 class Weakness(BaseModel):
@@ -98,7 +128,6 @@ class FindingsSummary(BaseModel):
     environment: str = Field(description="the system under test and its baseline, 2-3 sentences")
     weaknesses: list[Weakness] = Field(description="ranked, most severe first")
     fixes: list[FixRecommendation]
-    overall_score: int = Field(description="your overall judgement, between the lowest and highest experiment score")
     limitations: str = Field(description="what these experiments did not show")
 
 
@@ -257,11 +286,20 @@ def validate_experiment(r: ExperimentReport, facts: dict) -> list[str]:
     bad = [e for e in r.evidence if e not in _allowed_evidence(facts)]
     if bad:
         errs.append(f"unknown evidence ids {bad}; evidence may only contain {_allowed_evidence(facts)}")
-    names = [c.component for c in r.scores]
+    return errs
+
+
+def validate_judgement(j: ScoreJudgement, facts: dict) -> list[str]:
+    errs = []
+    if j.exp_ref != facts["exp_ref"]:
+        errs.append(f"exp_ref must be {facts['exp_ref']!r}")
+    names = [c.component for c in j.scores]
     if sorted(names) != sorted(COMPONENTS):
         errs.append(f"scores must contain each of {COMPONENTS} exactly once")
-    if any(c.score is not None and not 0 <= c.score <= 100 for c in r.scores):
+    if any(c.score is not None and not 0 <= c.score <= 100 for c in j.scores):
         errs.append("component scores must be 0-100 or null")
+    if any(len(c.reason.strip()) < 15 for c in j.scores):
+        errs.append("every component needs a reason citing the evidence")
     return errs
 
 
@@ -282,9 +320,6 @@ def validate_summary(s: FindingsSummary, exp_reports: list[ExperimentReport], fi
         errs.append("weaknesses must be ordered most severe first")
     if bad := [f.playbook_id for f in s.fixes if f.playbook_id not in PLAYBOOK]:
         errs.append(f"fixes not in playbook {bad}; use only {sorted(PLAYBOOK)}")
-    totals = [r.total() for r in exp_reports if r.total() is not None]
-    if totals and not min(totals) <= s.overall_score <= max(totals):
-        errs.append(f"overall_score must lie between the experiment scores {min(totals)}-{max(totals)}")
     return errs
 
 
@@ -306,15 +341,43 @@ ALL FACTS:
 
 ALLOWED EVIDENCE IDS: {json.dumps(_allowed_evidence(facts))}
 
+{f"YOUR PREVIOUS ANSWER WAS REJECTED, fix these problems: {feedback}" if feedback else ""}
+Return JSON with exp_ref "{facts['exp_ref']}", a one-sentence headline, why_chosen, expected_vs_observed, impact,
+recovery, root_cause and evidence. (The resilience score is judged in a separate step.)"""
+
+
+def score_prompt(facts: dict, reference: dict, calibration: list[dict], feedback: str | None) -> str:
+    ref = {k: {"score": c["score"], "evidence": c["why"]} for k, c in (reference.get("components") or {}).items()}
+    cal = [{k: e.get(k) for k in ("exp_ref", "fault", "target", "status", "key_facts", "reference", "ai_scores",
+                                  "ai_total")} for e in calibration]
+    return f"""You are Agent 2 of a chaos-engineering harness, judging the resilience of the system in one experiment.
+Use ONLY the facts below.
+
+{SYSTEM}
+
+KEY FACTS IN PLAIN WORDS:
+{chr(10).join(plain_facts(facts))}
+
+ALL FACTS:
+{json.dumps(facts, indent=1, default=str)}
+
+REFERENCE (formula score, a heuristic; total {reference.get('total')}):
+{json.dumps(ref, indent=1)}
+
+CALIBRATION (your earlier judgements on real experiments; stay consistent with them):
+{json.dumps(cal, indent=1, default=str) if cal else "none yet: this is the first scored experiment"}
+
 SCORING RUBRIC:
 {RUBRIC}
 {f"YOUR PREVIOUS ANSWER WAS REJECTED, fix these problems: {feedback}" if feedback else ""}
-Return JSON with exp_ref "{facts['exp_ref']}", a one-sentence headline, why_chosen, expected_vs_observed, impact,
-recovery, root_cause, evidence and scores (all five components)."""
+Return JSON with exp_ref "{facts['exp_ref']}" and scores: all five components, each with score (0-100 or null) and
+a reason that cites the measured numbers (and says why if you depart from the reference)."""
 
 
 def summary_prompt(facts: list[dict], exp_reports: list[ExperimentReport], fired: set[str],
-                   feedback: str | None) -> str:
+                   feedback: str | None, scores: dict | None = None) -> str:
+    scores = {k: {"total": v["total"], "verdict": v["verdict"],
+                  "components": {c: x["score"] for c, x in v["components"].items()}} for k, v in (scores or {}).items()}
     fixes = {k: {"title": v["title"], "change": v["change"], "addresses": v["addresses"], "effort": v["effort"],
                  "impact": v["impact"]} for k, v in PLAYBOOK.items()}
     by_ref = {f["exp_ref"]: f for f in facts}
@@ -323,8 +386,7 @@ def summary_prompt(facts: list[dict], exp_reports: list[ExperimentReport], fired
                 "in_flight_order_fates": by_ref[r.exp_ref]["in_flight_order_fates"],
                 "recovery_time_s": by_ref[r.exp_ref]["recovery_time_s"],
                 "manual_action_needed": by_ref[r.exp_ref]["manual_action_needed"],
-                "score": r.total(), "verdict": r.verdict(),
-                "component_scores": {c.component: c.score for c in r.scores}} for r in exp_reports]
+                "ai_resilience_score": scores.get(r.exp_ref)} for r in exp_reports]
     detectors = [{"exp_ref": f["exp_ref"], **d} for f in facts for d in f["detectors_fired"]]
     agent2 = [{"exp_ref": f["exp_ref"], "fixes": (f["agent2_blind_diagnosis"] or {}).get("fixes")} for f in facts]
     return f"""You are Agent 2 of a chaos-engineering harness, writing the summary of the findings report across all
@@ -355,7 +417,7 @@ most severe first; evidence = detector ids from {sorted(fired)}; seen_in = exper
 fixes (playbook ids ranked by priority, 1 = do first, with why and the weakness titles they address; recommend a
 fix only if its "change" actually addresses the observed cause, e.g. Redis persistence only helps when Redis lost
 its state),
-overall_score (your judgement, between the lowest and highest experiment score) and limitations."""
+and limitations. Quote the resilience scores as given; do not change them."""
 
 
 # ------------------------------------------------------------ run
@@ -380,11 +442,37 @@ def _ask(purpose: str, prompt_fn, model_cls, validate, fact_check, journal, call
     raise llm.LLMUnavailable(f"{purpose} invalid after {ATTEMPTS} attempts: {feedback}"[:300])
 
 
+def judge_scores(facts: dict, reference: dict, journal=None, call=None, samples: int = SAMPLES) -> dict:
+    """Agent 2's resilience score: SAMPLES independent judgements (different seeds), median per component."""
+    from chaosctl import score_memory
+    calibration = score_memory.examples(facts["fault"]["name"], facts["exp_ref"])
+    js = []
+    for k in range(samples):
+        feedback = None
+        for _ in range(ATTEMPTS):
+            j = llm.generate_json("report_score", score_prompt(facts, reference, calibration, feedback), ScoreJudgement,
+                                  journal=journal, call=call, timeout_s=TIMEOUT_S, seed=7 + k,
+                                  temperature=SAMPLE_TEMPERATURE)
+            if not (errs := validate_judgement(j, facts)):
+                js.append(j)
+                break
+            feedback = "; ".join(errs)
+    if not js:
+        raise llm.LLMUnavailable(f"report_score invalid after {ATTEMPTS} attempts: {feedback}"[:300])
+    out = median_judgement(js)
+    out["calibrated_on"] = [e["exp_ref"] for e in calibration]
+    return out
+
+
 def write_report(exps: list[dict], kb, journal=None, call=None) -> dict:
     """AI-written report content. Raises llm.LLMUnavailable if the model is unavailable or stays invalid.
-    Each exp needs the report.load_run() keys plus "detectors" and "grade"."""
+    Each exp needs the report.load_run() keys plus "detectors", "grade" and "score" (the formula reference)."""
     facts = [experiment_facts(e, kb) for e in exps]
-    exp_reports, warnings = [], {}
+    refs = {f["exp_ref"]: (e.get("score") or {}) for f, e in zip(facts, exps)}
+    exp_reports, warnings, scores = [], {}, {}
+    for f in facts:
+        if refs[f["exp_ref"]].get("scored"):
+            scores[f["exp_ref"]] = judge_scores(f, refs[f["exp_ref"]], journal, call)
     for f in facts:
         allowed = grounded_numbers(f)
         r, bad = _ask("report_experiment", lambda fb, f=f: experiment_prompt(f, fb), ExperimentReport,
@@ -396,11 +484,13 @@ def write_report(exps: list[dict], kb, journal=None, call=None) -> dict:
         exp_reports.append(r)
     fired = {d["id"] for f in facts for d in f["detectors_fired"]}
     allowed = set().union(*(grounded_numbers(f) for f in facts)) if facts else set()
-    allowed |= _numbers([[r.total()] + [c.score for c in r.scores] for r in exp_reports])
-    summary, bad = _ask("report_summary", lambda fb: summary_prompt(facts, exp_reports, fired, fb), FindingsSummary,
+    allowed |= _numbers([[v["total"]] + [c["score"] for c in v["components"].values()] for v in scores.values()])
+    summary, bad = _ask("report_summary", lambda fb: summary_prompt(facts, exp_reports, fired, fb, scores),
+                        FindingsSummary,
                         lambda s: validate_summary(s, exp_reports, fired),
                         lambda s: ungrounded(_text(s), allowed) + false_claims(_text(s), facts),
                         journal, call)
     if bad:
         warnings["summary"] = bad
-    return {"experiments": exp_reports, "summary": summary, "unverified_numbers": warnings, "facts": facts}
+    return {"experiments": exp_reports, "scores": scores, "summary": summary, "unverified_numbers": warnings,
+            "facts": facts}

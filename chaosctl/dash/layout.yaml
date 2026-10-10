@@ -1,0 +1,28 @@
+# Dashboard-only layout hints for the system map. Nodes and edges always come from the
+# dependency graph (/api/graph); this file only says where to draw them and what short
+# role text to print inside a node. A graph node missing here is placed automatically
+# from its `kind` (see dash/model.py: ZONE_BY_KIND), so new nodes still appear.
+
+zones:            # left to right
+  - {id: clients, label: Clients}
+  - {id: app, label: n8n application}
+  - {id: data, label: Queue and data}
+  - {id: external, label: External dependency}
+
+nodes:            # zone + row (0 top .. 2 bottom) + optional column inside the zone
+  client: {zone: clients, row: 0, title: load generator}
+  n8n-main: {zone: app, row: 0, roles: [receives webhooks, runs timers, UI and API, enqueues jobs]}
+  n8n-worker: {zone: app, row: 2, roles: [consumes jobs, executes workflows]}
+  redis: {zone: data, row: 1, col: 0, roles: [job queue (Bull)]}
+  postgres: {zone: data, row: 1, col: 1, roles: [workflows, executions, orders]}
+  mock-api: {zone: external, row: 2, roles: [HTTP dependency, called by workflows]}
+
+# Thin, muted lane under the map. Status is read live from these namespaces/labels.
+platform:
+  - {id: namespace, label: "Kubernetes namespace n8n-chaos", role: target namespace}
+  - {id: chaos-mesh, label: "Chaos Mesh", role: "attacker: controller + daemon", namespace: chaos-mesh,
+     selector: "app.kubernetes.io/instance=chaos-mesh"}
+  - {id: prometheus, label: Prometheus, role: observer, namespace: monitoring,
+     selector: "app.kubernetes.io/name=prometheus", graph_node: prometheus}
+  - {id: grafana, label: Grafana, role: observer, namespace: monitoring,
+     selector: "app.kubernetes.io/name=grafana", graph_node: grafana}

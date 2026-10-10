@@ -1,0 +1,51 @@
+{
+  "fault": "worker_pod_kill",
+  "target": "n8n-worker",
+  "rung": "ungraceful",
+  "chaos_name": "chaosctl-r1010-214152-worker-pod-kill",
+  "at_inject": {
+    "in_flight": {
+      "W1": [
+        "08975e49-1c86-4f7d-b0f2-090c38cfaf15",
+        "6d547080-8177-47a9-855b-fa427affe27c",
+        "7a3e0e46-33af-4b07-b6f0-ad4a75c52dea",
+        "fdc925b6-efe6-4242-a396-e0e18badda95"
+      ],
+      "W2": [
+        "68555ee9-c3d2-47b8-b518-18b94bc49998",
+        "abc9cf83-f9c3-496e-b258-a600b71a452c",
+        "ae63da87-575e-4074-94eb-f799fe77bd0c",
+        "fea42221-0f7f-440a-895c-cfd9576f4718"
+      ]
+    },
+    "queue": {
+      "reachable": true,
+      "wait": 0,
+      "active": 8,
+      "dbsize": 33
+    },
+    "target_pods": [
+      "n8n-worker-6cd6854ff5-8nqkn",
+      "n8n-worker-6cd6854ff5-whgxb"
+    ],
+    "target_uids": [
+      "b7d7a545-5511-49a9-ad05-f79c4af46070",
+      "edddfcb4-c1a0-47de-b35a-4252474e5d06"
+    ]
+  },
+  "thresholds": {
+    "w1_error_rate": 0.5,
+    "w1_p95_ms": 20000,
+    "queue_waiting": 20,
+    "max_total_s": 180,
+    "recovery_deadline_s": 120,
+    "error_rate_armed_after_s": 90,
+    "error_rate_abort": true,
+    "window_s": 5.0,
+    "allowed_unready": [
+      "n8n-main",
+      "n8n-worker"
+    ]
+  },
+  "abort_reason": null
+}

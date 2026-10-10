@@ -1,0 +1,23 @@
+# Knowledge for catalog fault packet_loss (format: docs/KNOWLEDGE_BASE.md)
+fault: packet_loss
+alias: E6
+title: Packet loss
+category: network
+summary: Chaos Mesh drops 10 % or 30 % of the packets Redis, Postgres or the mock API send, for 45 s.
+hypothesis: TCP retransmits turn dropped packets into latency spikes on every call to the target; W1 p95 rises,
+  a few requests may time out, nothing is lost
+symptoms:
+  expected:
+  - latency_degradation
+  possible:
+  - sync_errors
+  - queue_backlog
+  - silent_async_failure
+grading_keywords:
+- packet loss
+- network loss
+- retransmission
+- lossy network
+related_fixes:
+- http_retry_backoff
+- http_timeout_budget

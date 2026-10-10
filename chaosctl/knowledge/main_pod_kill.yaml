@@ -1,0 +1,30 @@
+# Knowledge for catalog fault main_pod_kill (format: docs/KNOWLEDGE_BASE.md)
+fault: main_pod_kill
+alias: E10
+title: n8n-main pod kill
+category: compute_loss
+summary: 'Delete the single n8n-main pod: webhooks are not accepted until the replacement is Ready.'
+hypothesis: webhook calls fail until n8n-main is back; jobs already queued still finish on the workers
+symptoms:
+  expected:
+  - ingress_down
+  - sync_errors
+  possible:
+  - dependency_restart
+  - lost_work
+  - latency_degradation
+signature:
+  any_of:
+  - ingress_down
+  all_of: []
+  root_cause: 'The webhook entry point (n8n-main) was unavailable: even asynchronous (W2) requests were refused,
+    not just slow.'
+  priority: 30
+grading_keywords:
+- n8n-main
+- webhook
+- ingress
+- entry point
+related_fixes:
+- webhook_processors
+- pod_disruption_budget

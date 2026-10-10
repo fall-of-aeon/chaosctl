@@ -116,8 +116,148 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   "Resilience score and ranking" (overall score + verdict, ranked bars, hover details) reading the newest findings.json,
   and an 8th step "Report & score". Checked visually in light and dark; live AI run on two synthetic runs ranked the
   Redis kill (13) below the worker kill (54). 84 unit tests pass.
+- Resilience score is now **AI-judged** (team decision): Agent 2 scores each component from the evidence with the
+  formula as a reference it may depart from (with a reason), calibrated on its earlier real judgements
+  (state/score_memory.jsonl, in-context calibration, not training), 3 independent judgements (temperature 0.5),
+  median per component; total computed in code. Live on two synthetic runs: worker kill 49.0 (reference 48.7),
+  Redis kill 37.8 (reference 42.8, self-recovery 40/40/60). 87 unit tests pass.
+## Failure catalog finalized (2026-10-11)
+- `catalog.yaml`: 15 enabled faults over PodChaos (pod-kill, pod-failure), NetworkChaos (delay, partition) and HTTPChaos
+  (replace code, abort, delay) on all 5 injectable nodes, tiers 1-3, each with a ladder (gentlest first).
+  StressChaos (CPU, memory) and TimeChaos are present but disabled (`known_issue`, see FACTS).
+- `chaosmesh.py`: any ladder/`params` key is a template placeholder (values checked against a safe pattern, may not
+  override name/namespace/selector); `peer` resolves to a second catalog selector (partition); `_check` pins the
+  network target to `n8n-chaos`, requires every non-pod-kill fault to be reversible, caps CPU workers, memory size
+  and clock offset.
+- Agent 1: hypotheses for every fault; prompt lists kind/reversible and asks for at most 6 experiments with node
+  diversity; the deterministic plan lets nodes take turns at each fault's gentlest rung; `--exp` filters candidates
+  before planning. Runner: SLIs of a reversible fault are not "recovered" before its duration ends.
+- Live: all 26 CRs pass a server dry run; `scripts/chaos_smoke.py` passed for HTTP 500/abort/delay, redis/postgres
+  delay and worker-redis partition (effect measured from a worker pod, and restored after delete). StressChaos left
+  both workers in deleted cgroups and TimeChaos crashed one worker once; workers restarted (`rollout restart`).
+- 103 unit tests pass. Not yet run as full experiments under load; the Mistral path was not exercised (local `.env`
+  has no `MISTRAL_API_KEY` yet).
 
-## Final end-to-end acceptance test (2026-10-11, branch e2e-results)
+## Dashboard rebuild, step 0: what exists and decisions (2026-10-11)
+- Found: `chaosctl/dashboard.py` (stdlib `ThreadingHTTPServer`, one `/api/state` blob polled every 1 s, plus `/api/chat`)
+  and `dashboard.html` (vanilla JS, hand-drawn SVG). Real: loadgen SQLite rates, Redis LLEN/DBSIZE, pod readiness.
+  Hardcoded in the page: map node positions and edges (`POS`/`FLOWS`, order-flow path only), step captions, the
+  "Mistral" label. Stale: SPOF/replicas came from the static `Graph.build([])` (overlay only, replicas 1) while pod
+  counts came from the live API, hence "2 pods" next to "SPOF". Restarts were lifetime counts.
+- Candidate "duplicates" are not duplicates: `graph.candidates()` emits one row per ladder rung (e.g. `redis_latency`
+  l100ms / l500ms / l2000ms); the table hid the rung. Fix is in the UI (variant column), `graph.py` is unchanged.
+- LLM: the code calls the **Mistral** API (`llm.py`, commit "Switch LLM from Gemini to Mistral"), not Gemini as
+  BUILD_PLAN says; `.env` has only GEMINI_* keys, so every current call is `no_api_key` -> deterministic fallback.
+  Older runs (e.g. r1010-214152) recorded Gemini models. The dashboard now shows whatever the journal recorded.
+- `graph.json` is stale (worker replicas 1; the cluster runs 2). The dashboard rebuilds the graph from the live
+  cluster every 30 s with the same `Graph.build(live_manifests())` as `chaosctl graph`, falling back to `graph.json`.
+- W3 (heartbeat) was removed from `overlay.yaml` earlier; the workflow strip shows the workflows the graph has (W1, W2).
+- Decisions: keep the stack (stdlib server, vanilla JS + SVG, **no new dependencies**). Layout uses fixed zones from
+  node `kind` (external, app, queue/db, mock, obs) plus optional hints in `chaosctl/dash/layout.yaml` (dashboard-only
+  file; `overlay.yaml` is untouched so Agent 1's prompt does not change). One collector thread samples at 1 Hz and
+  all browsers share it (SSE + polling fallback). Rates are trailing 5 s windows sampled every 1 s (1 s buckets at
+  2 req/s are too bursty to read). The chat panel is not part of the page structure in the brief, so it is removed
+  from the page; `POST /api/chat` stays for the CLI/README.
+
+## All 6 organizer failure types + no silent fallbacks (2026-10-11)
+- **No silent degradation** (`chaosctl/alerts.py`): every LLM fallback (no key/model, quota, timeout, invalid
+  answer, `--no-llm`), incomplete evidence, safety-thread error, chaos clean-up problem and unconfirmed injection is
+  printed as a red panel when it happens, journaled as `degraded`, appended to `state/degraded.jsonl` (dashboard red
+  banner), and repeated in a summary at exit. Sources are labelled `llm:api:<model>` / `llm:cache:<model>` /
+  `fallback:<reason>`; a fallback diagnosis is graded with "does not count as an Agent 2 result". `--require-llm` /
+  `CHAOSCTL_REQUIRE_LLM=1` turns any LLM fallback into exit code 2. Previously `run`/`demo` never printed the plan source.
+- **New faults**: `worker_container_kill`, `mockapi_container_kill` (PodChaos container-kill), `packet_loss`
+  (NetworkChaos loss on redis/postgres/mock-api), `postgres_overload` (pgbench Job: CPU or 85 held connections),
+  `traffic_spike` (load generator 2 -> 6/10 req/s), `postgres_disk_full` (ballast Job on a real 512 MiB loop disk,
+  `scripts/pg_small_disk.sh`; IOChaos does not inject on this Kind setup). New drivers: Kubernetes Jobs (allow-listed
+  image/PVC, no privileges) and LoadSpike.
+- **Every injection is verified** (`ChaosMesh.verify_injected`: Chaos Mesh AllInjected / Job pod running / the
+  ballast Job's own "disk now ..." line); unconfirmed -> `inject_failed`. Runs whose SLIs never return -> `unrecovered`.
+- **Smoke test** (`scripts/chaos_smoke.py`): 11/11 enabled fault types PASS with a measured effect and full restore.
+- **End-to-end runs** (`chaosctl run --exp <fault>`, load + safety controller + fates). All plans and diagnoses were
+  the deterministic fallback (local `.env` has no `MISTRAL_MODEL`/`MISTRAL_API_KEY`), and every one said so loudly.
+
+| Run | Fault (rung) | Result | Recovery | In-flight fates |
+|---|---|---|---|---|
+| r1011-013023 | worker_container_kill | first run exposed a runner bug: recovery of a same-pod restart was never detected but the run said "completed" (history corrected to unrecovered) | - | 5 ok, 4 lost visibly |
+| r1011-015806 | worker_container_kill (re-run after fix) | completed | 33.6 s | 5 ok, **4 W2 lost silently** |
+| r1011-013500 | mockapi_http_500 (500 for 30 s) | completed; W1 failed for ~30 s, W2 kept answering 200 | 69.1 s | 2 ok, **3 lost silently**, 4 lost visibly |
+| r1011-013938 | packet_loss 10 % on postgres / mock-api / redis | completed x3; p95 up to 7.3 s, below the 1.5x symptom threshold | 46-48 s | all completed once |
+| r1011-014710 | traffic_spike (x3, 6 req/s for 60 s) | completed; queue to 153 waiting, active capped at 20, drained after the spike, no errors | 137.5 s | 20/20 completed once |
+| r1011-015135 | postgres_overload (cpu4) | completed; p95 5.5 s max, absorbed | 45.6 s | all completed once |
+| r1011-020233 | postgres_disk_full (nearly_full, verified "99% used, 4184 KB free") | completed; n8n unaffected with 4 MiB free (the `full` rung gives `No space left on device` in the smoke test) | 55.1 s | all completed once |
+
+- Also fixed from these runs: `t_queue_drained` was recorded at t=0 for reversible faults (before the backlog built).
+- Not done: Agent 2 on the new faults with the real LLM (needs the Mistral key); the harsh rungs (`full`, `hold85`,
+  `x5`, `loss30`) only ran in the smoke test, not as full experiments (`--exp` uses the gentlest rung).
+
+### Real LLM check (Mistral key added, 2026-10-11)
+- `scripts/llm_smoke.py`: ministral-14b-latest answers structured JSON in ~1 s. `chaosctl --require-llm plan`: Agent 1 plan
+  from the LLM (`llm:api:ministral-14b-latest`), 6 experiments over 5 nodes, all validated and approved by the guard.
+- Running Agent 2 with the real LLM exposed **two silent harness bugs**, both fixed:
+  1. **Contaminated evidence**: bundles took each pod's last 200 log lines regardless of time, so postgres's
+     `No space left on device` lines from the disk-full smoke test were in every later run's evidence and the LLM blamed
+     "Postgres disk full" for the HTTP 500, spike and container-kill runs. Logs are now limited to the experiment window
+     (kubelet timestamps, `since_seconds`), plus the previous container's lines when a container restarted.
+     `scripts/refresh_evidence_logs.py` re-collected the window for the 8 runs (backups kept).
+  2. **Lenient grader**: substring matching graded "Postgres disk full ... Worker restarts" as a correct worker diagnosis
+     and "remained" as naming n8n-main. Now word-boundary patterns on the root cause only, and the first component named
+     (or the fault's nature, e.g. "traffic burst") must be the target. New verdict `NO_IMPACT` when there was no SLI
+     symptom AND every in-flight order ended normally (silent loss counts as impact).
+- Also: more evidence ids allowed (`ev:restarts_delta`, ...); when no High/Critical detector fired the LLM may answer
+  "no degradation" with no fix instead of inventing a playbook id (3 of 8 first answers failed validation; `--require-llm`
+  stopped those runs as intended).
+- **Agent 2 accuracy on the new faults (real LLM, clean evidence): 1 of 4 runs with impact correct**
+  (worker_container_kill CORRECT; mockapi_http_500, packet_loss on redis, traffic_spike MISSED); 4 runs NO_IMPACT.
+  Likely causes: the evidence has no offered-load (requests/s) signal, so a traffic spike looks like a slow dependency;
+  n8n does not log the mock's HTTP 500s at the levels we keep, so the 500 run has no log evidence.
+
+## Dashboard rebuild: result (2026-10-11)
+- New package `chaosctl/dash/` (sources live/replay, hub collector, pure `model.py`, stdlib server, static page). Old
+  `dashboard.py/.html` removed. No new dependencies. `chaosctl dashboard [--port] [--replay <run-id>]`.
+- Live acceptance runs: E1 r1011-020611 (recovery 71.1 s, 9 completed once + 1 lost visibly) and E2 r1011-021151
+  (recovery 129.8 s, 13 completed once). The API's recovery time and fate counts equal the evidence JSON for both.
+- E1 on the map: fault marker on n8n-worker with the real pod (Chaos Mesh record), blast radius n8n-main only, worker
+  Degraded at T+1.6 s (1 of 2 Ready), W2 "silent", W1 client errors at T+60 (client timeout). The harness's own
+  `t_first_symptom` is T+26.5 (it ignores a missing replica while another is Ready); the dashboard shows both.
+- E2: DBSIZE collapse 41 -> 0 shown on the redis node, blast radius n8n-main + n8n-worker; redis never sampled Down
+  (replacement Ready in 1.4 s).
+- Disconnect test: chip shows Disconnected within ~1 s of killing the API, values greyed, recovers on restart.
+- A 0 s grace pod kill deletes the pod in < 1 s, so it is never sampled as Terminating; the detail panel lists it as
+  "Killed (deleted)" from the Chaos Mesh record instead.
+- Coordination: two other sessions shared this checkout and cluster; experiments were serialized with them. The runner
+  leaves `state/active_run.json` behind when an experiment is skipped before inject (not fixed: runner is out of scope).
+- Degraded banner (alerts.py records + dashboard blind spots) added at the catalog session's request.
+- Not done: loadgen-off-within-10 s check was not timed separately (the off state renders "Load generator off" with "-"
+  values, seen in the after-recovery screenshots); W3 is not shown because the graph no longer has it.
+
+## Catalog merged with the knowledge base (2026-10-11, branch error-catalog)
+- Merged origin/main (PR #1 knowledge base + AI report, PR #2 AI resilience score) into the catalog work. Hypotheses
+  moved from code into `chaosctl/knowledge/<fault>.yaml`; the strict grader now takes each fault's words from its
+  knowledge file.
+- **18 new knowledge files** (15 enabled faults + 3 disabled), aliases E3-E11; `chaosctl kb`: "knowledge base consistent"
+  (22 catalog faults, 22 knowledge files).
+- **5 new detectors**: `sync_errors`, `ingress_down`, `queue_backlog`, `db_errors`, `downstream_errors`; signatures for
+  the new faults (ingress down > database > downstream errors > queue backlog > sync errors > latency only).
+- **7 new playbook fixes** (17 total): http_retry_backoff, http_timeout_budget, db_connection_pooling,
+  disk_usage_alert, autoscale_workers, webhook_processors, postgres_ha.
+- Agent 2 with the real LLM on the 8 saved runs: **2 of 4 runs with impact correct** (was 1 of 4): mockapi_http_500 now
+  CORRECT, worker_container_kill CORRECT; traffic_spike ("workers were overloaded") and packet_loss on redis MISSED;
+  4 runs NO_IMPACT.
+- The old dashboard's resilience-score panel (from PR #1/#2) has to be ported to chaosctl/dash; its test is skipped
+  with that reason until then.
+- Follow-up after the merge of origin/main (2026-10-11): ported main's "Resilience score and ranking" panel into
+  `chaosctl/dash` (`GET /api/resilience`, newest `reports/**/findings.json`; replay reads only the replayed run's
+  report) and its 8th phase step "Report and score" (done when the run is in the newest report). The brief asked for 7
+  steps; main's merged PR added the 8th, so main wins. `test_dashboard_reads_newest_report` moved to
+  `tests/test_dashboard.py`. The panel shows "No report yet" until `chaosctl report` runs.
+- E1/E2 evidence re-collected with `scripts/refresh_evidence_logs.py` (a stale postgres "No space left on device" line
+  from another session's smoke test had leaked in; originals backed up outside the repo) and re-diagnosed: both blind
+  diagnoses now come from the LLM (Mistral `ministral-14b-latest`, live API) and grade CORRECT. The page passes the
+  bundle to `grade()` so NO_IMPACT runs are labelled as such. The E1 after-recovery screenshots predate this refresh.
+
+
+## End-to-end acceptance test, run 1: E1/E2 only (2026-10-11, branch e2e-results)
 - Run per `docs/E2E_TEST_PROMPT.md` on a Linux host (Arch, 16 cores, 14 GiB RAM, Docker 29.9, kind 0.33, Helm 4.3),
   cluster deleted and rebuilt from scratch (cluster-up 7 min 9 s, up 1 min 11 s, bootstrap 64 s). Results with every
   number: `docs/E2E_RESULTS.md` (**37 PASS, 5 FAIL, 1 GAP**); reports and screenshots in `docs/results/`.
