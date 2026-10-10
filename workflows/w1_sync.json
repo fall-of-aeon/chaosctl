@@ -1,11 +1,11 @@
 {
   "id": "chaosW1sync0001",
-  "name": "W1 sync order",
+  "name": "W1 sync order (customer waits)",
   "active": false,
   "nodes": [
     {
       "id": "cd4a8dde-d13b-54d1-a164-b5c9e9b14912",
-      "name": "webhook",
+      "name": "receive order",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
@@ -21,48 +21,12 @@
       }
     },
     {
-      "id": "cb056d98-3c4a-578f-885b-d0ac39093bc0",
-      "name": "validate",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        220,
-        0
-      ],
-      "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            {
-              "id": "a1",
-              "name": "request_id",
-              "type": "string",
-              "value": "={{ $json.body.request_id }}"
-            },
-            {
-              "id": "a2",
-              "name": "workflow",
-              "type": "string",
-              "value": "={{ $json.body.workflow }}"
-            },
-            {
-              "id": "a3",
-              "name": "received_at",
-              "type": "string",
-              "value": "={{ $json.body.received_at }}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
       "id": "57ee3590-37ef-5932-b436-b103e06bdb09",
       "name": "call mock-api",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        440,
+        240,
         0
       ],
       "parameters": {
@@ -73,7 +37,7 @@
           "parameters": [
             {
               "name": "request_id",
-              "value": "={{ $json.request_id }}"
+              "value": "={{ $json.body.request_id }}"
             }
           ]
         },
@@ -84,11 +48,11 @@
     },
     {
       "id": "435374d7-b1f8-5e69-9f9a-2abd353b0f22",
-      "name": "insert order",
+      "name": "save order",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        660,
+        480,
         0
       ],
       "credentials": {
@@ -101,24 +65,13 @@
         "operation": "executeQuery",
         "query": "INSERT INTO orders (request_id, workflow, received_at) VALUES ($1::uuid, $2, $3::timestamptz) RETURNING request_id::text, workflow",
         "options": {
-          "queryReplacement": "={{ [$('validate').item.json.request_id, $('validate').item.json.workflow, $('validate').item.json.received_at] }}"
+          "queryReplacement": "={{ [$('receive order').item.json.body.request_id, $('receive order').item.json.body.workflow, $('receive order').item.json.body.received_at] }}"
         }
       }
     }
   ],
   "connections": {
-    "webhook": {
-      "main": [
-        [
-          {
-            "node": "validate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "validate": {
+    "receive order": {
       "main": [
         [
           {
@@ -133,7 +86,7 @@
       "main": [
         [
           {
-            "node": "insert order",
+            "node": "save order",
             "type": "main",
             "index": 0
           }

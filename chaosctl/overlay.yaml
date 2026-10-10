@@ -36,6 +36,3 @@ workflows:
   W2:
     path: [client, n8n-main, redis, n8n-worker, mock-api, postgres]
     client_visible_until: redis
-  W3:
-    path: [n8n-main, redis, n8n-worker, postgres]
-    client_visible_until: null

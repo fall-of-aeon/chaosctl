@@ -48,9 +48,9 @@ def test_overlay_wins_and_merge_is_deterministic():
 def test_blast_radius_and_workflows():
     g = build()
     assert g.blast_radius("redis") == {"nodes": ["n8n-main", "n8n-worker"], "client_impact": True}
-    assert set(g.workflows_affected("redis")) == {"W1", "W2", "W3"}
+    assert set(g.workflows_affected("redis")) == {"W1", "W2"}
     assert g.blast_radius("n8n-worker") == {"nodes": ["n8n-main"], "client_impact": True}
-    assert g.workflows_affected("n8n-worker") == {"W1": "client_visible", "W2": "silent", "W3": "internal"}
+    assert g.workflows_affected("n8n-worker") == {"W1": "client_visible", "W2": "silent"}
     assert {"n8n-main", "n8n-worker"} <= set(g.blast_radius("postgres")["nodes"])
 
 

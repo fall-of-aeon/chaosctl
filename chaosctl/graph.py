@@ -245,7 +245,8 @@ class Graph:
             a["criticality"] = round(0.5 * coverage + 0.3 * spof + 0.2 * dep_counts[name] / max_dep, 3)
 
     def ranked(self) -> list[str]:
-        return sorted(self.nodes, key=lambda n: (-self.nodes[n]["criticality"], n))
+        # ties broken by direct dependents (fan-in): more services lean on it directly
+        return sorted(self.nodes, key=lambda n: (-self.nodes[n]["criticality"], -self.nodes[n]["fan_in"], n))
 
     def has_id(self, ref: str) -> bool:
         if ref.startswith("node:"):

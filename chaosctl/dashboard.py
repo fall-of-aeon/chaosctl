@@ -20,7 +20,7 @@ LOADGEN_DB = ROOT / "state" / "loadgen.sqlite"
 HTML = Path(__file__).with_name("dashboard.html")
 HISTORY_S = 300
 EVENT_KINDS = {"inject", "abort", "kill_switch_exec", "watchdog_restart", "experiment_end", "experiment_start",
-               "chaos_delete_all", "safety_armed", "warmup"}
+               "chaos_delete_all", "safety_armed", "warmup", "state"}
 
 
 class Sampler(threading.Thread):
@@ -73,7 +73,7 @@ def latest_run() -> dict:
                 continue
             if e.get("event") in EVENT_KINDS:
                 keep = {k: e[k] for k in ("event", "ts", "reason", "via", "exp_id", "status", "fates",
-                                          "recovery_time_s", "in_flight", "nodes", "plan", "seconds") if k in e}
+                                          "recovery_time_s", "in_flight", "nodes", "plan", "seconds", "to") if k in e}
                 if "plan" in keep:
                     p = keep.pop("plan")
                     keep.update(fault=p.get("fault"), target=p.get("target"), reason_text=p.get("reason"),
@@ -100,6 +100,32 @@ def latest_run() -> dict:
                         for r in results]}
 
 
+def agent1_choice() -> dict | None:
+    """Newest Agent 1 decision (from a run or from `chaosctl plan`): candidates with scores, chosen plan, verdicts."""
+    best = None
+    for jp in list((ROOT / "reports").glob("r*/journal.jsonl")) + [ROOT / "reports" / "plans" / "journal.jsonl"]:
+        if not jp.exists():
+            continue
+        scored = None
+        for line in jp.read_text().splitlines():
+            if '"agent1_' not in line:
+                continue
+            e = json.loads(line)
+            if e["event"] == "agent1_scored":
+                scored = e["candidates"]
+            elif e["event"] == "agent1_plan" and (best is None or e["ts"] > best["ts"]):
+                best = {"ts": e["ts"], "source": e["source"], "candidates": scored or [],
+                        "plan": e["plan"]["experiments"], "verdicts": e["verdicts"]}
+    return best
+
+
+def system_map() -> dict:
+    from chaosctl.graph import Graph
+    g = Graph.build([])
+    return {n: {"kind": a["kind"], "spof": a["spof"], "criticality": a["criticality"],
+                "blast_radius": g.blast_radius(n)["nodes"]} for n, a in g.nodes.items() if a["kind"] != "obs"}
+
+
 def serve(port: int = 8787) -> None:
     sampler = Sampler()
     sampler.start()
@@ -122,6 +148,7 @@ def serve(port: int = 8787) -> None:
                     pts, pods = list(sampler.points), dict(sampler.pods)
                 base = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
                 body = {"now": time.time(), "points": pts, "pods": pods, "run": latest_run(),
+                        "agent1": agent1_choice(), "map": system_map(),
                         "baseline": {"w1_p95": (base or {}).get("w1", {}).get("p95_ms"),
                                      "w1_success": (base or {}).get("w1", {}).get("success_rate"),
                                      "rate": (base or {}).get("rate")} if base else None}

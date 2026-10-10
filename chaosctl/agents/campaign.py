@@ -40,6 +40,7 @@ class CampaignState(TypedDict, total=False):
     plan_source: str
     queue: list[str]          # exp ids left to run
     only: list[str] | None    # restrict to these faults
+    max_experiments: int | None
     results: list[dict]
     stop_reason: str | None
 
@@ -59,6 +60,8 @@ def build_campaign(runner, graph_loader, policy: dict, journal: Journal, approve
         exps = out["plan"].experiments
         if s.get("only"):
             exps = [e for e in exps if e.fault in s["only"]]
+        if s.get("max_experiments"):
+            exps = exps[: s["max_experiments"]]
         return {"plan": LLMPlan(experiments=exps), "verdicts": out["verdicts"], "plan_source": out["source"],
                 "queue": [e.id for e in exps]}
 

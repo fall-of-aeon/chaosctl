@@ -91,9 +91,6 @@ class PgProbe:
         total, distinct = rows[0]
         return {"reachable": True, "orders": total, "duplicates": total - distinct}
 
-    def heartbeat_rows_since(self, since_ts: float) -> int | None:
-        rows = self._query("SELECT count(*) FROM orders WHERE workflow='W3' AND completed_at >= to_timestamp(%s)", (since_ts,))
-        return None if rows is None else int(rows[0][0])
 
 
 class K8sProbe:

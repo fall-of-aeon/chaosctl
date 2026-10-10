@@ -122,10 +122,11 @@ class LoadStats:
     def __init__(self, db_path: str | Path):
         self.conn = connect(db_path)
 
-    def pending(self, workflow: str) -> list[str]:
-        """Requests sent with no response yet."""
+    def pending(self, workflow: str, max_age_s: float = 90) -> list[str]:
+        """Requests sent recently with no response yet (older ones were cut off when a load run stopped)."""
         rows = self.conn.execute(
-            "SELECT request_id FROM requests WHERE workflow=? AND finished_ts IS NULL", (workflow,)).fetchall()
+            "SELECT request_id FROM requests WHERE workflow=? AND finished_ts IS NULL AND sent_ts > ?",
+            (workflow, time.time() - max_age_s)).fetchall()
         return [r[0] for r in rows]
 
     def accepted_since(self, workflow: str, since_ts: float) -> list[str]:

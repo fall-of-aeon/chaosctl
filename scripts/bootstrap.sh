@@ -27,7 +27,8 @@ $K exec "$MAIN" -- mkdir -p /tmp/wf
 for f in workflows/*.json; do $K cp "$f" "$MAIN:/tmp/wf/$(basename "$f")" >/dev/null; done
 $K exec "$MAIN" -- n8n import:workflow --separate --input=/tmp/wf
 
-for id in chaosW1sync0001 chaosW2async001 chaosW3beat0001; do
+$K exec "$MAIN" -- n8n update:workflow --id=chaosW3beat0001 --active=false >/dev/null 2>&1 || true  # removed workflow
+for id in chaosW1sync0001 chaosW2async001; do
   if $K exec "$MAIN" -- n8n publish:workflow --help >/dev/null 2>&1; then
     $K exec "$MAIN" -- n8n publish:workflow --id="$id"
   else
@@ -52,5 +53,5 @@ curl -s -m 60 -w ' [W2 HTTP %{http_code} %{time_total}s]\n' -H 'content-type: ap
   -d "{\"request_id\":\"$RID2\",\"workflow\":\"W2\",\"received_at\":\"$NOW\"}" http://127.0.0.1:15678/webhook/chaos-w2
 sleep 8
 $K exec statefulset/postgres -- psql -U n8n -d n8n -tAc \
-  "SELECT workflow, count(*) FROM orders WHERE request_id IN ('$RID1','$RID2') OR workflow='W3' GROUP BY 1 ORDER BY 1"
+  "SELECT workflow, count(*) FROM orders WHERE request_id IN ('$RID1','$RID2') GROUP BY 1 ORDER BY 1"
 echo "bootstrap done"

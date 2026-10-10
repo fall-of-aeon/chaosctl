@@ -90,6 +90,17 @@ td.num { text-align: right; font-weight: 600; }
 .msg-a { background: var(--surface-0); border: 1px solid var(--border); padding: 10px 12px; border-radius: 12px 12px 12px 2px; max-width: 92%; white-space: pre-wrap; }
 .src { display: block; margin-top: 6px; font-size: 12px; color: var(--text-muted); white-space: normal; }
 .src b { color: var(--text-secondary); font-weight: 600; }
+.steps { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; counter-reset: st; }
+.steps li { counter-increment: st; flex: 1 1 120px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+  color: var(--text-muted); font-size: 13px; font-weight: 600; }
+.steps li::before { content: counter(st) ". "; }
+.steps li.done { color: var(--text-secondary); }
+.steps li.now { color: #fff; background: var(--series-1); border-color: var(--series-1); }
+.mapwrap { display: grid; gap: 12px; grid-template-columns: 1fr; }
+@media (min-width: 1100px) { .mapwrap { grid-template-columns: 1.4fr 1fr; } }
+.cand { width: 100%; font-size: 13px; }
+.cand td, .cand th { padding: 5px 6px; }
+.cand tr.pick td { font-weight: 650; }
 .h-tag { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
 </style>
 </head>
@@ -104,6 +115,23 @@ td.num { text-align: right; font-weight: 600; }
       <button data-win="120">2 min</button><button data-win="180" aria-pressed="true">3 min</button><button data-win="300">5 min</button>
     </div>
   </header>
+
+  <section class="card" style="margin-bottom:12px">
+    <ol class="steps" id="steps"></ol>
+    <div id="step-say" style="margin-top:10px;font-size:15px"></div>
+  </section>
+
+  <section class="mapwrap" style="margin-bottom:12px">
+    <div class="card">
+      <h2 style="font-size:14px;margin:0 0 2px">System map: how an order flows</h2>
+      <div class="desc" style="color:var(--text-muted);font-size:12px">Arrows = data flow. Green/red = live health. 💥 = Agent 1's target. Dashed orange = blast radius (what breaks with it).</div>
+      <svg id="map" viewBox="0 0 880 250" style="height:auto;max-height:280px" role="img" aria-label="Service dependency map"></svg>
+    </div>
+    <div class="card" id="agent1">
+      <h2 style="font-size:14px;margin:0 0 6px">Agent 1: what to break, and why</h2>
+      <div class="empty">Run <code>chaosctl plan</code> or an experiment.</div>
+    </div>
+  </section>
 
   <section class="grid services" id="services" aria-label="Service health"></section>
   <section class="grid kpis" id="kpis" aria-label="Headline numbers"></section>
@@ -380,7 +408,92 @@ function renderDiag() {
     </div>`;
 }
 
-function render() { if (!state) return; renderTop(); renderCharts(); renderExp(); renderDiag(); }
+const STEPS = [
+  ["Map", "The system: 5 services. An order goes client → n8n-main → Redis queue → worker → mock-api → Postgres. Redis and Postgres are single points of failure."],
+  ["Baseline", "Normal traffic: 2 orders per second, no errors, about 5 s per order. This is what 'healthy' looks like."],
+  ["Agent 1 decides", "Agent 1 scores every allowed experiment on the map and picks one, with a reason and a prediction. A rule-based guard sets the safety limits."],
+  ["Inject", "Exactly one fault, once, while orders are in flight: Chaos Mesh kills the target pod."],
+  ["Impact / auto-stop", "Watch customers feel it: latency up, queue piling up, async customers still told OK. If a safety limit is crossed, the controller stops the experiment by itself."],
+  ["Recover", "The fault is removed, Kubernetes brings the pod back, the watchdog checks every service is healthy, then we check what happened to each in-flight order."],
+  ["Agent 2 diagnoses", "Agent 2, not told what we broke, reads the evidence, reasons step by step and recommends fixes from a vetted playbook."],
+];
+function currentStep() {
+  const ev = state.run?.events || [];
+  const last = [...ev].reverse();
+  const start = last.find((e) => e.event === "experiment_start");
+  if (!start) return state.agent1 ? 2 : 1;
+  const after = ev.filter((e) => e.ts >= start.ts);
+  const has = (k) => after.some((e) => e.event === k);
+  const st = [...after].reverse().find((e) => e.event === "state")?.to;
+  if (has("experiment_end")) return state.run?.diagnosis ? 6 : 5;
+  if (st === "RECOVERY_WAIT" || st === "DONE") return 5;
+  if (has("inject") || has("abort")) return 4;
+  const warm = after.find((e) => e.event === "warmup");
+  if (warm && state.now - warm.ts < warm.seconds) return 1;
+  return 2;
+}
+function renderSteps() {
+  const cur = currentStep();
+  $("steps").innerHTML = STEPS.map(([t], i) => `<li class="${i < cur ? "done" : i === cur ? "now" : ""}">${t}</li>`).join("");
+  $("step-say").innerHTML = `<b>${STEPS[cur][0]}:</b> ${STEPS[cur][1]}`;
+}
+
+const POS = {"client": [62, 125], "n8n-main": [245, 125], "redis": [430, 125], "n8n-worker": [615, 125],
+             "mock-api": [810, 55], "postgres": [810, 195]};
+const FLOWS = [["client", "n8n-main", "webhook"], ["n8n-main", "redis", "enqueue"], ["redis", "n8n-worker", "dequeue"],
+               ["n8n-worker", "mock-api", "HTTP call"], ["n8n-worker", "postgres", "save order"], ["n8n-main", "postgres", "executions"]];
+function renderMap() {
+  const plan = state.agent1?.plan?.[0];
+  const startEv = [...(state.run?.events || [])].reverse().find((e) => e.event === "experiment_start");
+  const target = (startEv?.target || plan?.target || "").replace("node:", "");
+  const blast = new Set((state.map?.[target]?.blast_radius) || []);
+  let g = `<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="var(--axis)"/></marker></defs>`;
+  for (const [a, b, label] of FLOWS) {
+    const [x1, y1] = POS[a], [x2, y2] = POS[b];
+    const curve = a === "n8n-main" && b === "postgres";
+    const d = curve ? `M${x1},${y1 + 24}C${x1 + 60},${y2 + 55} ${x2 - 160},${y2 + 55} ${x2 - 62},${y2 + 8}`
+                    : `M${x1 + (x2 > x1 ? 58 : 0)},${y1}L${x2 - 62},${y2}`;
+    g += `<path d="${d}" fill="none" stroke="var(--axis)" stroke-width="2" marker-end="url(#arr)"/>`;
+    const mx = curve ? (x1 + x2) / 2 : (x1 + x2) / 2, my = curve ? y2 + 44 : (y1 + y2) / 2 - 8;
+    g += `<text x="${mx}" y="${my}" text-anchor="middle">${label}</text>`;
+  }
+  for (const [n, [x, y]] of Object.entries(POS)) {
+    const pod = state.pods?.[n];
+    const ok = n === "client" ? true : !!pod?.ready;
+    const fill = n === "client" ? "var(--surface-0)" : ok ? "color-mix(in srgb, var(--good) 18%, var(--surface-1))" : "color-mix(in srgb, var(--critical) 28%, var(--surface-1))";
+    const stroke = n === target ? "var(--critical)" : blast.has(n) ? "var(--serious)" : ok ? "var(--good)" : "var(--critical)";
+    const dash = blast.has(n) && n !== target ? ' stroke-dasharray="6 4"' : "";
+    g += `<rect x="${x - 58}" y="${y - 24}" width="116" height="48" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="${n === target ? 3 : 2}"${dash}/>`;
+    g += `<text x="${x}" y="${y - 2}" text-anchor="middle" style="fill:var(--text-primary);font-size:13px;font-weight:650">${n}</text>`;
+    const sub = n === "client" ? "load generator" : (ok ? "✓ ready" : "✕ down") + (state.map?.[n]?.spof ? " · SPOF" : "");
+    g += `<text x="${x}" y="${y + 14}" text-anchor="middle">${sub}</text>`;
+    if (n === target) g += `<text x="${x}" y="${y - 32}" text-anchor="middle" style="fill:var(--critical);font-weight:700;font-size:12px">💥 TARGET</text>`;
+  }
+  $("map").innerHTML = g;
+}
+function renderAgent1() {
+  const a = state.agent1;
+  if (!a) return;
+  const picked = new Set(a.plan.map((p) => p.target + "|" + p.fault));
+  const verdict = Object.fromEntries((a.verdicts || []).map((v) => [v.exp_id, v]));
+  const rows = (a.candidates || []).map((c) => {
+    const pk = picked.has(c.target + "|" + c.fault);
+    return `<tr class="${pk ? "pick" : ""}"><td>${pk ? "✅" : "·"}</td><td>${c.fault.replaceAll("_", " ")}</td><td>${c.target.replace("node:", "")}</td>
+      <td class="num">${c.tier}</td><td class="num">${c.score.toFixed(2)}</td><td>${c.untested ? "untested" : "tested before"}</td></tr>`;
+  }).join("");
+  const p = a.plan[0], v = p ? verdict[p.id] : null;
+  $("agent1").innerHTML = `<h2 style="font-size:14px;margin:0 0 6px">Agent 1: what to break, and why <span class="h-tag">${a.source === "llm" ? "Gemini" : "deterministic fallback"}</span></h2>
+    <table class="cand"><thead><tr><th></th><th>Allowed experiment</th><th>Target</th><th style="text-align:right">Risk tier</th><th style="text-align:right">Score</th><th>History</th></tr></thead><tbody>${rows}</tbody></table>
+    ${p ? `<dl style="margin-top:10px;display:grid;grid-template-columns:max-content 1fr;gap:4px 10px;font-size:13px">
+      <dt style="color:var(--text-secondary)">Picked</dt><dd style="margin:0"><b>${p.fault.replaceAll("_", " ")} → ${p.target.replace("node:", "")}</b></dd>
+      <dt style="color:var(--text-secondary)">Why</dt><dd style="margin:0">${p.reason}</dd>
+      <dt style="color:var(--text-secondary)">Prediction</dt><dd style="margin:0">${p.hypothesis} <span class="h-tag">hypothesis</span></dd>
+      ${v ? `<dt style="color:var(--text-secondary)">Safety guard</dt><dd style="margin:0">${v.verdict}: ${v.rationale}. Auto-stop if W1 errors &gt; ${Math.round(v.abort.w1_error_rate * 100)}%, p95 &gt; ${v.abort.w1_p95_ms / 1000}s, queue &gt; ${v.abort.queue_waiting}, or after ${v.abort.max_total_s}s.</dd>` : ""}
+    </dl>` : ""}
+    <div style="color:var(--text-muted);font-size:12px;margin-top:6px">Score = 0.4×criticality + 0.3×untested + 0.2×new info − 0.1×risk. Gemini chooses among these; the guard can only make limits stricter.</div>`;
+}
+
+function render() { if (!state) return; renderSteps(); renderMap(); renderAgent1(); renderTop(); renderCharts(); renderExp(); renderDiag(); }
 
 async function poll() {
   try { state = await (await fetch("/api/state", {cache: "no-store"})).json(); render(); }

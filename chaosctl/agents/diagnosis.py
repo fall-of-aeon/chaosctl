@@ -141,7 +141,7 @@ def prompt(b: dict, hits: list[dict]) -> str:
     fixes = {k: {"title": v["title"], "addresses": v["addresses"]} for k, v in PLAYBOOK.items()}
     return f"""You are an SRE diagnosing an incident in an n8n queue-mode system (n8n-main receives webhooks and
 enqueues jobs in Redis; n8n-worker executes them, calls mock-api and writes orders to Postgres). W1 clients wait for
-the result; W2 clients get 200 immediately; W3 is a timer heartbeat. You were NOT told what failed. Work it out from
+the result; W2 clients get 200 immediately. You were NOT told what failed. Work it out from
 the evidence only.
 
 EVIDENCE:

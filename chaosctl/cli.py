@@ -215,6 +215,43 @@ def run(exp: list[str] = typer.Option(None, help="E1 (worker kill) / E2 (redis k
         console.print(f"[red]campaign stopped: {state['stop_reason']}[/red]")
 
 
+@app.command()
+def demo(queue_abort: int = typer.Option(None, help="strict queue limit to show the automatic stop (e.g. 20)"),
+         llm: bool = typer.Option(True, "--llm/--no-llm")):
+    """Judge demo in one command: Agent 1 picks ONE experiment, it runs once under the safety controller,
+    then Agent 2 diagnoses it blind. Watch http://127.0.0.1:8787 while it runs."""
+    from chaosctl.agents.campaign import build_campaign
+    from chaosctl.runner import Runner, load_policy
+
+    policy = load_policy()
+    if queue_abort is not None:
+        policy["defaults"]["abort"]["queue_waiting"] = min(queue_abort, policy["defaults"]["abort"]["queue_waiting"])
+    runner = Runner()
+    runner.start_safety()
+    console.rule("[bold]1-3 · Agent 1 reads the map and picks one experiment[/bold]")
+    camp = build_campaign(runner, _live_graph, policy, runner.journal)
+    try:
+        state = camp.invoke({"only": None, "max_experiments": 1, "use_llm": llm}, {"recursion_limit": 50})
+    finally:
+        runner.loadgen.stop()
+        runner.ctl.stop()
+    (runner.dir / "results.json").write_text(json.dumps(state.get("results", []), indent=2, default=str))
+    res = (state.get("results") or [None])[0]
+    if not res:
+        console.print("[red]Agent 1 produced no runnable experiment.[/red]")
+        raise typer.Exit(1)
+    console.rule(f"[bold]4-6 · result: {res['fault']} -> {res['target']}: {res['status']}[/bold]")
+    for k in ("skip_reason", "abort_reason", "recovery_time_s", "manual_action_needed"):
+        if res.get(k) is not None:
+            console.print(f"  {k}: {res[k]}")
+    if res.get("fates"):
+        console.print(f"  in-flight orders: {res['fates']['summary']}")
+    if res["status"] == "skipped":
+        raise typer.Exit(0)
+    console.rule("[bold]7 · Agent 2 diagnoses, blind[/bold]")
+    diagnose(run=runner.run_id, exp=res["exp_id"], llm=llm, pace=0.8)
+
+
 @app.command("ks-hold", hidden=True)
 def ks_hold(run_id: str = typer.Option(...), hold_s: int = 60):
     """Child process for killswitch-test: inject reversible pod_failure on the worker and wait under the controller."""

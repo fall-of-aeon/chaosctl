@@ -18,19 +18,22 @@ n8n is an open-source workflow-automation tool (like Zapier). In **queue mode** 
 
 Data flow: `client → n8n-main → Redis → n8n-worker → mock-api → Postgres`.
 
-## The 3 workflows
-All three are tiny "order processing" flows. Open them in the n8n UI at http://127.0.0.1:15678 (Workflows list).
+## The 2 workflows
+Open them in the n8n UI at http://127.0.0.1:15678 (Workflows list). Both are the same 3 steps:
+**receive order (webhook) → call mock-api (4 s) → save order in Postgres**. They differ in one setting only:
 
-| Workflow | Trigger | Steps | Why it exists |
-|---|---|---|---|
-| **W1 sync order** | `POST /webhook/chaos-w1` | validate → call mock-api → insert row in `orders` → **respond with the result** | The client **waits** for the result, so failures show up as errors and slow responses. Shows **visible** impact. |
-| **W2 async order** | `POST /webhook/chaos-w2` | same steps, but n8n **answers "200 OK" immediately** and does the work later | The client is told "OK" before anything runs. Shows **silent** failures: work that is accepted, then lost. |
-| **W3 heartbeat** | timer, every 10 s | insert a heartbeat row | Background/scheduled work. Missing rows reveal outages nobody is watching. |
+| Workflow | When the customer gets an answer | Why it exists |
+|---|---|---|
+| **W1 sync order** | after the order is saved | The customer **waits**, so failures show up as errors and slow responses (**visible** impact). |
+| **W2 async order** | immediately ("200 OK", before any work) | The customer is told "OK" before anything runs, so failures are **silent**: accepted, then lost. |
 
 Our load generator sends 2 orders per second (half W1, half W2), each with a unique `request_id`. Afterwards we look up
-every `request_id` in Postgres. That is how we know exactly which requests were **completed, lost, or duplicated**.
+every `request_id` in Postgres. That is how we know exactly which orders were **completed, lost, or duplicated**.
+(A third "heartbeat" workflow was removed: nothing in the analysis used it.)
 
 ## Step-by-step demo (about 6 min live; cut to 3 for the video)
+
+Shortcut: `uv run chaosctl demo` runs steps 3-6 in one go (Agent 1 picks one experiment, it runs once, Agent 2 diagnoses). Add `--queue-abort 20` to force the automatic stop.
 
 Before: `uv run chaosctl dashboard` and open http://127.0.0.1:8787 next to the terminal.
 
