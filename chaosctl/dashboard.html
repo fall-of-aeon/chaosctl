@@ -83,6 +83,13 @@ th { color: var(--text-secondary); font-weight: 600; font-size: 12px; }
 td.num { text-align: right; font-weight: 600; }
 .badge { display: inline-flex; align-items: center; gap: 5px; }
 .empty { color: var(--text-muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface-0); color: var(--text-secondary); cursor: pointer; }
+.msg-q { justify-self: end; background: var(--series-1); color: #fff; padding: 8px 12px; border-radius: 12px 12px 2px 12px; max-width: 80%; }
+.msg-a { background: var(--surface-0); border: 1px solid var(--border); padding: 10px 12px; border-radius: 12px 12px 12px 2px; max-width: 92%; white-space: pre-wrap; }
+.src { display: block; margin-top: 6px; font-size: 12px; color: var(--text-muted); white-space: normal; }
+.src b { color: var(--text-secondary); font-weight: 600; }
 .h-tag { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
 </style>
 </head>
@@ -128,6 +135,17 @@ td.num { text-align: right; font-weight: 600; }
   </section>
   <section class="card" id="agent2" style="margin-top:12px"><h2>Agent 2 · blind diagnosis</h2><div class="empty">Run <code>chaosctl diagnose</code> after an experiment.</div></section>
 </div>
+<section class="wrap" style="padding-top:0">
+  <div class="card" id="chat">
+    <h2 style="font-size:14px;margin:0 0 2px">Ask Agent 2 <span class="h-tag">answers from our run data, diagnoses, logs and the fix playbook (RAG) · advisory only</span></h2>
+    <div class="chips" id="chat-suggest"></div>
+    <div id="chat-log" style="display:grid;gap:10px;margin:10px 0;max-height:440px;overflow:auto"></div>
+    <form id="chat-form" style="display:flex;gap:8px">
+      <input id="chat-q" autocomplete="off" placeholder="e.g. Why did orders get lost when Redis restarted?" style="flex:1;font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface-0);color:var(--text-primary)">
+      <button style="font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--series-1);color:#fff;cursor:pointer">Ask</button>
+    </form>
+  </div>
+</section>
 <div class="tooltip" id="tip"></div>
 
 <script>
@@ -369,6 +387,31 @@ async function poll() {
   catch (e) { $("phase").innerHTML = `<span class="dot" style="background:var(--critical)"></span><span>dashboard server unreachable</span>`; }
   setTimeout(poll, 1000);
 }
+const chatHist = [];
+const SUGGEST = ["What went wrong when Redis restarted?", "Why were W2 orders lost silently?",
+  "What fixes do you recommend for the worker kill?", "What is a phantom success and how do we fix it?",
+  "Did adding a second worker help?"];
+$("chat-suggest").innerHTML = SUGGEST.map((q) => `<button class="chip" type="button">${q}</button>`).join("");
+$("chat-suggest").querySelectorAll(".chip").forEach((b) => b.onclick = () => { $("chat-q").value = b.textContent; $("chat-form").requestSubmit(); });
+const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
+$("chat-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const q = $("chat-q").value.trim();
+  if (!q) return;
+  $("chat-q").value = "";
+  const log = $("chat-log");
+  log.insertAdjacentHTML("beforeend", `<div class="msg-q">${esc(q)}</div><div class="msg-a" id="pending">Searching runs, diagnoses, logs and playbook…</div>`);
+  log.scrollTop = log.scrollHeight;
+  let out;
+  try {
+    out = await (await fetch("/api/chat", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({question: q, history: chatHist.slice(-3)})})).json();
+  } catch (e) { out = {answer: "Dashboard server unreachable.", sources: [], source: "error"}; }
+  chatHist.push({q, a: out.answer});
+  const srcs = (out.sources || []).map((s) => `<span class="src"><b>${esc(s.id)}</b> · ${esc(s.snippet)}…</span>`).join("");
+  $("pending").outerHTML = `<div class="msg-a">${esc(out.answer)}<span class="src">answered by ${esc(out.source)} · sources:</span>${srcs || '<span class="src">none</span>'}</div>`;
+  log.scrollTop = log.scrollHeight;
+};
 addEventListener("resize", render);
 poll();
 </script>

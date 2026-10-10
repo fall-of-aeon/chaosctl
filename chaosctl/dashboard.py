@@ -129,6 +129,19 @@ def serve(port: int = 8787) -> None:
             else:
                 self._send(HTML.read_bytes(), "text/html; charset=utf-8")
 
+    def do_POST(self):
+        if not self.path.startswith("/api/chat"):
+            self.send_response(404); self.end_headers(); return
+        from chaosctl.rag import ask
+        try:
+            req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0)) or 0) or b"{}")
+            q = str(req.get("question", "")).strip()[:500]
+            out = ask(q, req.get("history") or []) if q else {"answer": "Ask a question.", "sources": [], "source": "-"}
+        except Exception as exc:
+            out = {"answer": f"Chat error: {type(exc).__name__}", "sources": [], "source": "error"}
+        self._send(json.dumps(out).encode(), "application/json")
+
+    H.do_POST = do_POST
     srv = ThreadingHTTPServer(("127.0.0.1", port), H)
     print(f"dashboard: http://127.0.0.1:{port}  (Ctrl-C to stop)")
     srv.serve_forever()
