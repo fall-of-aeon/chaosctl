@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from chaosctl import alerts, llm
+from chaosctl.fault_kb import load_kb
 
 ROOT = Path(__file__).parents[2]
 PLAYBOOK = yaml.safe_load((Path(__file__).parents[1] / "playbook.yaml").read_text())["fixes"]
@@ -42,6 +43,11 @@ class Diagnosis(BaseModel):
 
 
 # ------------------------------------------------------------ detectors
+
+# Every id detect() can emit. Knowledge files and playbook.yaml refer to these.
+DETECTOR_IDS = {"consumers_down", "queue_unreachable", "queue_state_lost", "latency_degradation",
+                "silent_async_failure", "backlog_not_drained", "lost_work", "duplicates", "phantom_success",
+                "dependency_restart", "detectability_gap"}
 
 def blind(b: dict) -> dict:
     """Strip anything that names the injector (Chaos Mesh events/objects) so the diagnosis stays blind."""
@@ -167,12 +173,9 @@ allowed evidence ids), and 1-3 fixes ranked best first with a one-line why. Log 
 def fallback(hits: list[dict]) -> Diagnosis:
     ids = [h["id"] for h in hits]
     thoughts = [Thought(step="observe", text=h["detail"]) for h in hits[:4]]
-    if "queue_state_lost" in ids or "queue_unreachable" in ids:
-        root = "The Redis queue became unavailable and lost its state, so queued and running jobs disappeared."
-    elif "consumers_down" in ids:
-        root = "The queue consumer (worker) stopped: jobs piled up in Redis with nothing processing them."
-    else:
-        root = "Degradation without a single clear cause; see findings."
+    # blind: symptoms are matched against every known fault signature, not against what was injected
+    m = load_kb().match(set(ids))
+    root = m[1].root_cause if m else "Degradation without a single clear cause; see findings."
     thoughts.append(Thought(step="conclude", text=root))
     ranked = sorted(PLAYBOOK, key=lambda f: -len(set(PLAYBOOK[f]["addresses"]) & set(ids)))
     fixes = [FixPick(playbook_id=f, why=f"addresses {sorted(set(PLAYBOOK[f]['addresses']) & set(ids))}")
@@ -230,17 +233,10 @@ def diagnose(bundle: dict, journal=None, use_llm: bool = True) -> dict:
 
 COMPONENT_PATTERNS = {
     "n8n-worker": r"\bn8n-workers?\b|\bworkers?\b|\bconsumers?\b",
-    "redis": r"\bredis\b|\bqueue\b",
+    "redis": r"\bredis\b|\bqueue\b(?!\s+(?:consumers?|workers?|processing))",   # "queue consumer" = the worker
     "n8n-main": r"\bn8n-main\b|\bmain (?:pod|process|service|instance)\b|\bwebhook",
     "postgres": r"\bpostgres(?:ql)?\b|\bdatabase\b|\bdisk\b",
     "mock-api": r"\bmock-api\b|\bmock\b|\bdownstream\b|\bexternal (?:api|service|http)\b|\bhttp 5\d\d\b",
-}
-FAULT_PATTERNS = {   # faults whose cause is not "the target component broke"
-    "traffic_spike": r"\btraffic\b|\bload\b|\bspike\b|\bburst\b|\brequest rate\b|\boverload",
-    "packet_loss": r"\bpacket loss\b|\bnetwork\b|\bretransmi",
-    "redis_latency": r"\blatency\b|\bnetwork\b|\bslow\b",
-    "postgres_latency": r"\blatency\b|\bnetwork\b|\bslow\b",
-    "worker_redis_partition": r"\bpartition\b|\bnetwork\b|\bconnectivity\b",
 }
 
 
@@ -254,10 +250,12 @@ def grade(diag: dict, plan: dict, bundle: dict | None = None) -> dict:
     text = diag["root_cause"].lower()
     first = {n: m.start() for n, pat in COMPONENT_PATTERNS.items() if (m := re.search(pat, text))}
     first_named = min(first, key=first.get) if first else None
-    fm = re.search(FAULT_PATTERNS[fault], text) if fault in FAULT_PATTERNS else None
-    fault_hit = fm is not None
+    # the fault's own words (knowledge file grading_keywords), as whole words: "traffic", "packet loss", ...
+    words = load_kb().get(fault).keywords_for(target)
+    hits = [m.start() for w in words if (m := re.search(r"\b" + re.escape(w.lower()) + r"\b", text))]
+    fault_pos = min(hits) if hits else None
     # correct = the first thing named is the target, or the fault's own nature (e.g. "a traffic burst ... queue")
-    correct = first_named == target or (fault_hit and (first_named is None or fm.start() < first[first_named]))
+    correct = first_named == target or (fault_pos is not None and (first_named is None or fault_pos <= first[first_named]))
     b = bundle or {}
     fates = (b.get("fates") or {}).get("summary") or {}
     bad_fates = sum(fates.get(k, 0) for k in ("lost_silently", "lost_visible", "duplicated", "phantom_success",
@@ -266,4 +264,4 @@ def grade(diag: dict, plan: dict, bundle: dict | None = None) -> dict:
     no_impact = bundle is not None and (b.get("timeline") or {}).get("saw_symptom") is False and bad_fates == 0
     verdict = "NO_IMPACT" if no_impact else "CORRECT" if correct else "MISSED"
     return {"actual_target": target, "fault": fault, "root_cause_correct": bool(correct), "verdict": verdict,
-            "first_component_named": first_named, "fault_nature_named": fault_hit}
+            "first_component_named": first_named, "fault_nature_named": fault_pos is not None}

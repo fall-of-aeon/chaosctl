@@ -1,5 +1,6 @@
 import copy
 import re
+from pathlib import Path
 
 import pytest
 import yaml
@@ -58,7 +59,19 @@ class FakeApi:
         pass
 
 
-CAT = cm.load_catalog()
+CAT = cm.load_catalog(Path(__file__).parent / "fixtures" / "catalog.yaml")  # frozen; live catalog may change
+
+
+def test_live_catalog_is_safe():
+    """Whatever faults the live catalog holds, every enabled/test-only Chaos Mesh rung must pass the safety checks."""
+    live = cm.load_catalog()
+    for name, f in live["faults"].items():
+        if not (f.get("enabled") or f.get("test_only")) or "template" not in f:
+            continue
+        for target in f["applies_to"]["nodes"]:
+            for rung in f["ladder"]:
+                cr = cm.render(live, name, target, rung, "r1", allow_test_only=True)
+                assert cr["metadata"]["namespace"] == "n8n-chaos", (name, target, rung)
 
 
 def test_render_worker_kill():

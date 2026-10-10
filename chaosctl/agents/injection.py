@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from chaosctl import alerts, llm
+from chaosctl.fault_kb import load_kb
 from chaosctl.graph import Graph, node_id
 from chaosctl.journal import Journal, NullJournal
 from chaosctl.safety import Thresholds
@@ -75,46 +76,6 @@ def score_candidates(graph: Graph, catalog: dict, history: list[dict]) -> list[d
 
 # ------------------------------------------------------------ fallback
 
-HYPOTHESES = {
-    "worker_pod_kill": "in-flight W1 requests fail or hang while W2 keeps returning 200 and the wait queue grows; "
-                       "stalled jobs may be re-run after lock expiry, creating duplicates",
-    "worker_graceful_kill": "the worker drains its active jobs within the 30 s grace period, so no in-flight "
-                            "W1 request fails and no job is re-run",
-    "worker_pod_failure": "the failed worker stays Ready (no readiness signal), its active jobs stall until "
-                          "lock expiry and are redelivered to the other worker; W1 p95 rises",
-    "worker_cpu_stress": "W1 p95 rises on the stressed worker but no request fails and the queue drains after",
-    "worker_memory_stress": "the worker slows under memory pressure but is not OOM-killed (no limits set)",
-    "worker_clock_skew": "a skewed worker clock makes Bull treat locks as expired, causing duplicate executions",
-    "mockapi_http_500": "W1 requests in flight get errors (no retry on the HTTP node) while W2 still returns 200; "
-                        "failed executions are recorded in postgres",
-    "mockapi_http_abort": "W1 requests fail fast with a connection error; the worker stays healthy",
-    "mockapi_latency": "W1 p95 rises by the injected delay; past the 30 s known timeout W1 requests fail",
-    "redis_latency": "enqueue and dequeue slow down, so W1 and W2 latency rise and the wait queue grows; "
-                     "no job is lost",
-    "postgres_latency": "execution saves slow down, so W1 p95 rises; W2 responds as soon as the job is queued",
-    "worker_redis_partition": "the other worker keeps taking new jobs; jobs active on the partitioned worker "
-                              "finish late, or, if the partition reaches the 60 s lock duration, are redelivered "
-                              "and run twice",
-    "worker_container_kill": "the worker container restarts in place (restart count +1); its active jobs stall "
-                             "until lock expiry and are redelivered; W1 p95 rises, the other worker keeps going",
-    "mockapi_container_kill": "W1 requests in flight on the mock fail (connection reset/refused) until the container "
-                              "is back a few seconds later; n8n records failed executions",
-    "packet_loss": "TCP retransmits turn dropped packets into latency spikes on every call to the target; "
-                   "W1 p95 rises, a few requests may time out, nothing is lost",
-    "postgres_overload": "queries and execution saves slow down (CPU) or new connections are refused (held "
-                         "connections): W1 p95 rises or W1 fails; W2 keeps returning 200 while work backs up",
-    "traffic_spike": "the queue grows faster than the workers drain it; W1 p95 climbs toward the 30 s timeout and "
-                     "the backlog drains only after the spike ends",
-    "postgres_disk_full": "postgres cannot write WAL: execution saves fail, postgres may PANIC and restart, W1 "
-                          "fails while W2 still says 200; it recovers once the ballast is removed",
-    "redis_pod_kill": "queued and active jobs are lost because redis has no persistence; n8n may restart "
-                      "if the outage exceeds the 10 s redis timeout",
-    "main_pod_kill": "webhook calls fail until n8n-main is back; jobs already queued still finish on the workers",
-    "postgres_pod_kill": "executions cannot be saved: in-flight W1 requests fail and workers log DB errors "
-                         "until postgres is back; queued jobs resume after",
-}
-
-
 def templated_plan(graph: Graph, scored: list[dict], max_n: int | None = None) -> LLMPlan:
     """One experiment per (target, fault) at its gentlest rung, up to max_n. Nodes take turns
     (best fault of every node, then the second best, ...), so a short plan covers more nodes."""
@@ -140,7 +101,8 @@ def templated_plan(graph: Graph, scored: list[dict], max_n: int | None = None) -
         items.append(PlanItem(
             id=f"exp-{len(items) + 1:02d}", fault=c["fault"], target=c["target"], rung=c["rung"],
             start_when="in_flight>=3", cooldown_s=60, reason=reason, cites=[c["target"], *deps],
-            hypothesis=HYPOTHESES.get(c["fault"], f"{name} failure degrades {list(graph.workflows_affected(name))}")))
+            hypothesis=load_kb().get(c["fault"]).hypothesis
+            or f"{name} failure degrades {list(graph.workflows_affected(name))}"))
     return LLMPlan(experiments=items)
 
 
@@ -262,6 +224,8 @@ def build_prompt(graph: Graph, scored: list[dict], history: list[dict], policy: 
     cands = [{k: c[k] for k in ("target", "fault", "rung", "tier", "kind", "reversible", "score")} for c in scored]
     max_n = max_plan(policy)
     hist = [{k: h.get(k) for k in ("exp_id", "node", "fault", "status", "passed")} for h in history]
+    kb = load_kb()
+    faults = {f: kb.get(f).summary or kb.get(f).title for f in sorted({c["fault"] for c in scored})}
     return f"""You are the injection planner of a chaos-engineering harness for an n8n queue-mode app on Kubernetes.
 Choose which experiments to run, in what order, and explain why. You do not run anything.
 
@@ -271,6 +235,9 @@ DEPENDENCY GRAPH (edges: A depends on B; blast radius of X = nodes that can reac
 ENABLED CANDIDATES (only these (target, fault, rung) triples are allowed; score is a deterministic prior;
 rungs of one fault are listed gentlest first; reversible faults end on their own after a duration):
 {json.dumps(cands, indent=1)}
+
+WHAT EACH FAULT DOES:
+{json.dumps(faults, indent=1)}
 
 RUN HISTORY:
 {json.dumps(hist) if hist else "none"}

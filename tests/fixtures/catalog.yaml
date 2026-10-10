@@ -1,0 +1,546 @@
+# Failure catalog (BUILD_PLAN section 8). Agents pick (target, fault, rung) from here;
+# the harness renders Chaos Mesh CRs only from these templates (chaos/chaosmesh.py).
+#
+# Placeholders: {name} {namespace} {run_id} {selector} {peer_selector} {container} plus any
+# key of the fault's `params` or the chosen ladder rung (rung wins). Ladders run gentlest first.
+#
+# driver (default chaosmesh): chaosmesh = a Chaos Mesh CR; job = a Kubernetes Job we run
+# (pgbench load, disk ballast) from an allow-listed image; loadgen = our own load generator
+# changes its rate (traffic spike). Every driver goes through render() + _check().
+# Every non-PodChaos-kill fault must be `reversible` with a duration <= max_duration_s.
+# `test_only` entries are never planned; scripts/chaos_smoke.py and killswitch-test use them.
+#
+# Not in the catalog on purpose: DNSChaos (chart installed with dnsServer.create=false),
+# JVMChaos (n8n is Node.js), IOChaos (toda injector dies on this Kind setup, see FACTS; full
+# disk is done with a real small disk instead), KernelChaos/BlockChaos (single-node Kind: can
+# take the node down), AWS/GCP/Azure/PhysicalMachine chaos (no cloud, no VMs).
+targets:   # graph node -> pod label selector (namespace is always n8n-chaos)
+  n8n-worker: {app.kubernetes.io/name: n8n, app.kubernetes.io/instance: n8n, app.kubernetes.io/component: worker}
+  n8n-main: {app.kubernetes.io/name: n8n, app.kubernetes.io/instance: n8n, app.kubernetes.io/component: main}
+  redis: {app: redis}
+  postgres: {app: postgres}
+  mock-api: {app: mock-api}
+containers:   # graph node -> container name (container-kill)
+  n8n-worker: n8n-worker
+  mock-api: mock-api
+
+templates:
+  pod_kill: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      action: pod-kill
+      mode: one
+      gracePeriod: {grace_period}
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  pod_failure: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      action: pod-failure
+      mode: one
+      duration: "{duration}s"
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  network_delay: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      action: delay
+      mode: one
+      duration: "{duration}s"
+      direction: to
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+      delay: {latency: "{latency_ms}ms", jitter: "{jitter_ms}ms", correlation: "0"}
+  network_partition: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      action: partition
+      mode: one
+      duration: "{duration}s"
+      direction: both
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+      target:
+        mode: all
+        selector:
+          namespaces: ["{namespace}"]
+          labelSelectors: {peer_selector}
+  http_replace_code: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: HTTPChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      mode: one
+      duration: "{duration}s"
+      target: Response
+      port: {port}
+      path: "{path}"
+      replace: {code: {code}}
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  http_abort: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: HTTPChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      mode: one
+      duration: "{duration}s"
+      target: Request
+      port: {port}
+      path: "{path}"
+      abort: true
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  http_delay: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: HTTPChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      mode: one
+      duration: "{duration}s"
+      target: Request
+      port: {port}
+      path: "{path}"
+      delay: "{delay_s}s"
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  stress_cpu: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: StressChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      mode: one
+      duration: "{duration}s"
+      stressors:
+        cpu: {workers: {workers}, load: {load}}
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  stress_memory: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: StressChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      mode: one
+      duration: "{duration}s"
+      stressors:
+        memory: {workers: 1, size: "{size_mb}MB"}
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  time_skew: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: TimeChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      mode: one
+      duration: "{duration}s"
+      timeOffset: "{offset}"
+      clockIds: [CLOCK_REALTIME]
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+
+  container_kill: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      action: container-kill
+      mode: one
+      containerNames: ["{container}"]
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  network_loss: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      action: loss
+      mode: one
+      duration: "{duration}s"
+      direction: to
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+      loss: {loss: "{loss_pct}", correlation: "0"}
+  pgbench_job: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {duration}
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata: {labels: {app: chaosctl-load}}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+            - name: pgbench
+              image: "{image}"
+              imagePullPolicy: IfNotPresent
+              env:
+                - {name: PGPASSWORD, valueFrom: {secretKeyRef: {name: pg-secrets, key: password}}}
+                - {name: WORKLOAD, value: "{workload}"}
+              command: ["sh", "-c"]
+              args:
+                - |
+                  if [ "$WORKLOAD" = hold ]; then echo "SELECT pg_sleep(2);" > /tmp/q.sql
+                  else echo "SELECT count(*) FROM generate_series(1, 3000000);" > /tmp/q.sql; fi
+                  exec pgbench -h postgres -U n8n -d n8n -n -c {clients} -j 2 -T {duration} -f /tmp/q.sql
+  disk_ballast_job: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {duration}
+      ttlSecondsAfterFinished: 600
+      template:
+        metadata: {labels: {app: chaosctl-ballast}}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 20
+          volumes:
+            - {name: data, persistentVolumeClaim: {claimName: "{pvc}"}}
+          containers:
+            - name: ballast
+              image: "{image}"
+              imagePullPolicy: IfNotPresent
+              volumeMounts: [{name: data, mountPath: /data}]
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -u
+                  total=$(df -Pk /data | awk 'NR==2{print $2}')
+                  if [ "$total" -gt {max_disk_kb} ]; then
+                    echo "REFUSED: /data is $total KB, not the small chaos disk (scripts/pg_small_disk.sh)"; exit 3
+                  fi
+                  trap 'rm -f /data/chaosctl-ballast; echo "ballast released"; exit 0' TERM INT EXIT
+                  avail=$(df -Pk /data | awk 'NR==2{print $4}')
+                  fill=$(( (avail - {leave_kb}) / 1024 ))
+                  [ "$fill" -gt 0 ] && dd if=/dev/zero of=/data/chaosctl-ballast bs=1M count="$fill" 2>&1 | tail -1
+                  [ {leave_kb} -eq 0 ] && dd if=/dev/zero bs=4k >> /data/chaosctl-ballast 2>/dev/null
+                  df -Pk /data | awk 'NR==2{print "disk now", $5, "used,", $4, "KB free"}'
+                  sleep {hold_s} & wait $!
+  load_spike: |
+    kind: LoadSpike
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec: {rate_rps: {rate_rps}, duration: "{duration}s"}
+
+faults:
+  # ---------------------------------------------------------------- tier 1
+  # One replica-redundant or client-tolerated component, short or self-healing.
+  worker_pod_kill:
+    chaos_kind: PodChaos
+    template: pod_kill
+    applies_to: {nodes: [n8n-worker]}
+    enabled: true
+    tier: 1
+    reversible: false
+    recovery_deadline_s: 120
+    max_total_s: 180
+    ladder:
+      ungraceful: {grace_period: 0}
+  worker_graceful_kill:
+    chaos_kind: PodChaos
+    template: pod_kill
+    applies_to: {nodes: [n8n-worker]}
+    enabled: true
+    tier: 1
+    reversible: false
+    recovery_deadline_s: 120
+    ladder:
+      graceful: {grace_period: 30}
+  worker_pod_failure:
+    chaos_kind: PodChaos
+    template: pod_failure
+    applies_to: {nodes: [n8n-worker]}
+    enabled: true
+    tier: 1
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    ladder:
+      d30: {duration: 30}
+      d60: {duration: 60}
+  worker_cpu_stress:
+    chaos_kind: StressChaos
+    template: stress_cpu
+    applies_to: {nodes: [n8n-worker]}
+    enabled: false         # works once per fresh pod only; see known_issue
+    test_only: true
+    known_issue: StressChaos recovery leaves the container in a deleted cgroup on Kind (cgroup v2);
+      the next Stress/TimeChaos on that pod fails (docs/FACTS.md)
+    tier: 1
+    reversible: true
+    max_duration_s: 60
+    max_cpu_workers: 2
+    recovery_deadline_s: 120
+    ladder:
+      w1_load80: {workers: 1, load: 80, duration: 60}
+      w2_load100: {workers: 2, load: 100, duration: 60}
+  worker_container_kill:
+    chaos_kind: PodChaos
+    template: container_kill
+    applies_to: {nodes: [n8n-worker]}
+    enabled: true
+    tier: 1
+    reversible: false
+    recovery_deadline_s: 120
+    ladder:
+      kill: {}
+  mockapi_container_kill:
+    chaos_kind: PodChaos
+    template: container_kill
+    applies_to: {nodes: [mock-api]}
+    enabled: true
+    tier: 1
+    reversible: false
+    recovery_deadline_s: 120
+    ladder:
+      kill: {}
+  mockapi_http_500:
+    chaos_kind: HTTPChaos
+    template: http_replace_code
+    applies_to: {nodes: [mock-api]}
+    enabled: true
+    tier: 1
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    params: {port: 8080, path: /work}
+    ladder:
+      code500_d30: {code: 500, duration: 30}
+      code503_d60: {code: 503, duration: 60}
+  mockapi_http_abort:
+    chaos_kind: HTTPChaos
+    template: http_abort
+    applies_to: {nodes: [mock-api]}
+    enabled: true
+    tier: 1
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    params: {port: 8080, path: /work}
+    ladder:
+      d30: {duration: 30}
+
+  # ---------------------------------------------------------------- tier 2
+  # A shared dependency degraded (not removed); reversible by duration.
+  mockapi_latency:
+    chaos_kind: HTTPChaos
+    template: http_delay
+    applies_to: {nodes: [mock-api]}
+    enabled: true
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    params: {port: 8080, path: /work}
+    ladder:            # on top of the mock's own 4 s; 30 s is edge:n8n-worker->mock-api known_timeout_s
+      plus2s: {delay_s: 2, duration: 45}
+      plus10s: {delay_s: 10, duration: 45}
+      past_timeout: {delay_s: 30, duration: 60}
+  redis_latency:
+    chaos_kind: NetworkChaos
+    template: network_delay
+    applies_to: {nodes: [redis]}
+    enabled: true
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    ladder:
+      l100ms: {latency_ms: 100, jitter_ms: 20, duration: 45}
+      l500ms: {latency_ms: 500, jitter_ms: 100, duration: 45}
+      l2000ms: {latency_ms: 2000, jitter_ms: 200, duration: 45}
+  postgres_latency:
+    chaos_kind: NetworkChaos
+    template: network_delay
+    applies_to: {nodes: [postgres]}
+    enabled: true
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    ladder:
+      l100ms: {latency_ms: 100, jitter_ms: 20, duration: 45}
+      l1000ms: {latency_ms: 1000, jitter_ms: 100, duration: 45}
+  packet_loss:
+    chaos_kind: NetworkChaos
+    template: network_loss
+    applies_to: {nodes: [redis, postgres, mock-api]}
+    enabled: true
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    ladder:            # replies from the target are dropped; TCP retransmits turn this into latency spikes
+      loss10: {loss_pct: 10, duration: 45}
+      loss30: {loss_pct: 30, duration: 45}
+  postgres_overload:
+    chaos_kind: Job
+    driver: job
+    template: pgbench_job
+    applies_to: {nodes: [postgres]}
+    enabled: true
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    allowed_images: ["postgres:17.6-alpine"]
+    max_clients: 90
+    params: {image: "postgres:17.6-alpine"}
+    ladder:            # pgbench from inside the cluster against the n8n database
+      cpu4: {workload: cpu, clients: 4, duration: 45}
+      cpu8: {workload: cpu, clients: 8, duration: 45}
+      hold85: {workload: hold, clients: 85, duration: 45}   # 85 of max_connections=100 held
+  traffic_spike:
+    chaos_kind: LoadSpike
+    driver: loadgen
+    template: load_spike
+    applies_to: {nodes: [n8n-main]}
+    enabled: true
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    max_rate_rps: 10
+    recovery_deadline_s: 120
+    ladder:            # steady load is 2 req/s; 3 req/s already oversubscribes one worker
+      x3: {rate_rps: 6, duration: 60}
+      x5: {rate_rps: 10, duration: 60}
+  worker_redis_partition:
+    chaos_kind: NetworkChaos
+    template: network_partition
+    applies_to: {nodes: [n8n-worker]}
+    enabled: true
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    params: {peer: redis}
+    ladder:
+      d20: {duration: 20}
+      d60: {duration: 60}     # reaches the 60 s QUEUE_WORKER_LOCK_DURATION (renewed every 10 s): redelivery possible
+  worker_clock_skew:
+    chaos_kind: TimeChaos
+    template: time_skew
+    applies_to: {nodes: [n8n-worker]}
+    enabled: false         # works once per fresh pod only; see known_issue
+    test_only: true
+    known_issue: ptrace injection into Node.js is flaky on Kind (EPERM; one SIGSEGV after a prior
+      StressChaos on the same pod) (docs/FACTS.md)
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    max_offset_s: 600
+    recovery_deadline_s: 120
+    ladder:
+      plus2m: {offset: 2m, duration: 45}
+      minus2m: {offset: -2m, duration: 45}
+  worker_memory_stress:
+    chaos_kind: StressChaos
+    template: stress_memory
+    applies_to: {nodes: [n8n-worker]}
+    enabled: false         # works once per fresh pod only; see known_issue
+    test_only: true
+    known_issue: StressChaos recovery leaves the container in a deleted cgroup on Kind (cgroup v2);
+      the next Stress/TimeChaos on that pod fails (docs/FACTS.md)
+    tier: 2
+    reversible: true
+    max_duration_s: 60
+    max_memory_mb: 512    # workers run without limits; keep the 8 GB laptop safe
+    recovery_deadline_s: 120
+    ladder:
+      m256: {size_mb: 256, duration: 45}
+      m512: {size_mb: 512, duration: 45}
+
+  # ---------------------------------------------------------------- tier 3
+  # A single point of failure removed: outage by design, only after a tier 1 pass.
+  redis_pod_kill:
+    chaos_kind: PodChaos
+    template: pod_kill
+    applies_to: {nodes: [redis]}
+    enabled: true
+    tier: 3
+    reversible: false
+    recovery_deadline_s: 120
+    max_total_s: 180
+    ladder:
+      ungraceful: {grace_period: 0}
+  main_pod_kill:
+    chaos_kind: PodChaos
+    template: pod_kill
+    applies_to: {nodes: [n8n-main]}
+    enabled: true
+    tier: 3
+    reversible: false
+    recovery_deadline_s: 150
+    max_total_s: 180
+    ladder:
+      ungraceful: {grace_period: 0}
+  postgres_pod_kill:
+    chaos_kind: PodChaos
+    template: pod_kill
+    applies_to: {nodes: [postgres]}
+    enabled: true
+    tier: 3
+    reversible: false
+    recovery_deadline_s: 150
+    max_total_s: 180
+    ladder:
+      ungraceful: {grace_period: 0}
+
+  postgres_disk_full:
+    chaos_kind: Job
+    driver: job
+    template: disk_ballast_job
+    applies_to: {nodes: [postgres]}
+    enabled: true
+    tier: 3
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 180
+    allowed_images: ["postgres:17.6-alpine"]
+    allowed_pvcs: [data-postgres-0]
+    verify_log: "disk now"      # injection is confirmed only when the job reports the disk usage it reached
+    requires: small_pg_disk     # preflight: postgres data must be on the small disk (scripts/pg_small_disk.sh)
+    cleanup: ballast            # delete_all also removes /data/chaosctl-ballast with a cleanup Job
+    params: {image: "postgres:17.6-alpine", pvc: data-postgres-0, max_disk_kb: 1048576}
+    ladder:            # a ballast file fills the real (512 MiB) postgres disk; removed when the Job ends
+      nearly_full: {leave_kb: 4096, hold_s: 40, duration: 55}
+      full: {leave_kb: 0, hold_s: 40, duration: 55}
+
+  # ---------------------------------------------------------------- test only
+  pod_failure:            # kill-switch acceptance test (cli killswitch-test), never planned
+    chaos_kind: PodChaos
+    template: pod_failure
+    applies_to: {nodes: [n8n-worker, mock-api, postgres]}
+    enabled: false
+    test_only: true
+    tier: 1
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    ladder:
+      d60: {duration: 60}

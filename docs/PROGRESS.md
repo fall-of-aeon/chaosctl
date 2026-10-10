@@ -97,6 +97,30 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   (3.5 s); Agent 2 blind diagnosis from the LLM, root cause correct for E1 (11 s) and E2 (10 s); RAG chat and dashboard
   `/api/chat` answer with citations. 59 unit tests pass. Not yet re-run against the live cluster.
 
+## Fault knowledge base, findings report, resilience score (2026-10-10, branch fault-knowledge-base)
+- `chaosctl/knowledge/<fault>.yaml` + `fault_kb.py`: one file per catalog fault with hypothesis, expected symptoms,
+  blind signature, grading keywords, related fixes. Replaces the hard-coded per-fault dicts in injection.py
+  (hypotheses), diagnosis.py (fallback root causes, grading keywords) and cli.py (E1/E2 names); Agent 1's prompt now
+  includes each fault's summary. Outputs for E1/E2 unchanged. `chaosctl kb` lists faults and checks consistency.
+- `chaosctl report` (report.py) and `score.py`/`scoring.yaml`: findings.md/.json from existing run files; score
+  formulas in docs/KNOWLEDGE_BASE.md. 74 unit tests pass (15 new, on synthetic runs shaped like r1010-163348).
+  Not yet run on real cluster evidence (no reports/ on this machine).
+- Findings report is now **AI-written** by Agent 2 (agents/reporter.py): per-experiment analysis and component
+  scores, then summary, weakness ranking and fix priorities; validators + number/claim fact-check with up to 2
+  retries; deterministic draft (labelled) only if Mistral fails. First live attempts showed the small model gets
+  arithmetic and fate names wrong (called visible losses "silent", sum of weights off), hence: totals computed in
+  code from the AI's component scores, plain-sentence key facts, and a zero-count claims check. Then 3/3 live runs
+  AI-written (~50-60 s, scores 54-56, no flags). Formula score kept as cross-check. 80 unit tests pass.
+- Ranked resilience score: report section "Resilience ranking (least resilient first)" (experiments by score, weakest
+  component each; components ranked by mean) in both AI and draft reports and in findings.json; dashboard panel
+  "Resilience score and ranking" (overall score + verdict, ranked bars, hover details) reading the newest findings.json,
+  and an 8th step "Report & score". Checked visually in light and dark; live AI run on two synthetic runs ranked the
+  Redis kill (13) below the worker kill (54). 84 unit tests pass.
+- Resilience score is now **AI-judged** (team decision): Agent 2 scores each component from the evidence with the
+  formula as a reference it may depart from (with a reason), calibrated on its earlier real judgements
+  (state/score_memory.jsonl, in-context calibration, not training), 3 independent judgements (temperature 0.5),
+  median per component; total computed in code. Live on two synthetic runs: worker kill 49.0 (reference 48.7),
+  Redis kill 37.8 (reference 42.8, self-recovery 40/40/60). 87 unit tests pass.
 ## Failure catalog finalized (2026-10-11)
 - `catalog.yaml`: 15 enabled faults over PodChaos (pod-kill, pod-failure), NetworkChaos (delay, partition) and HTTPChaos
   (replace code, abort, delay) on all 5 injectable nodes, tiers 1-3, each with a ladder (gentlest first).

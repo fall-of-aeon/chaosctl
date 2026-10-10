@@ -64,8 +64,9 @@ def _cache() -> sqlite3.Connection:
     return conn
 
 
-def _key(model: str, prompt: str, schema: dict) -> str:
-    blob = json.dumps({"m": model, "p": prompt, "s": schema}, sort_keys=True)
+def _key(model: str, prompt: str, schema: dict, seed: int = 7, temperature: float = 0.1) -> str:
+    extra = {**({"seed": seed} if seed != 7 else {}), **({"t": temperature} if temperature != 0.1 else {})}
+    blob = json.dumps({"m": model, "p": prompt, "s": schema, **extra}, sort_keys=True)
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -91,19 +92,20 @@ def _strict(node):
     return node
 
 
-def _call_mistral(model: str, prompt: str, schema: dict) -> str:
+def _call_mistral(model: str, prompt: str, schema: dict, timeout_s: float = TIMEOUT_S, seed: int = 7,
+                  temperature: float = 0.1) -> str:
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "random_seed": 7,
+        "temperature": temperature,
+        "random_seed": seed,
         "response_format": {
             "type": "json_schema",
             "json_schema": {"name": schema.get("title", "Output"), "schema": _strict(json.loads(json.dumps(schema))),
                             "strict": True},
         },
     }
-    resp = httpx.post(MISTRAL_URL, json=body, timeout=TIMEOUT_S,
+    resp = httpx.post(MISTRAL_URL, json=body, timeout=timeout_s,
                       headers={"Authorization": f"Bearer {os.environ['MISTRAL_API_KEY']}"})
     if resp.status_code != 200:
         raise MistralHTTPError(resp.status_code, resp.text)
@@ -123,11 +125,16 @@ def generate_json(
     model_cls: type[T],
     journal: Callable[[dict], None] | None = None,
     call: Callable[[str, str, dict], str] | None = None,
+    timeout_s: float = TIMEOUT_S,
+    seed: int = 7,
+    temperature: float = 0.1,
     meta: dict | None = None,
 ) -> T:
-    """Return a validated model_cls instance or raise LLMUnavailable (its message says why).
-    meta, if given, is filled with {"source": "api"|"cache", "model": ...}."""
-    call = call or _call_mistral
+    """Return a validated model_cls instance or raise LLMUnavailable (its message says why). A different seed
+    (with a temperature above ~0.3) is an independent sample. meta, if given, is filled with
+    {"source": "api"|"cache", "model": ...}."""
+    real = call is None
+    call = call or (lambda m, p, s: _call_mistral(m, p, s, timeout_s, seed, temperature))
     prompt = redact(prompt)
     schema = model_cls.model_json_schema()
     models = [m for m in (os.environ.get("MISTRAL_MODEL"), os.environ.get("MISTRAL_FALLBACK_MODEL")) if m]
@@ -138,14 +145,14 @@ def generate_json(
     if not models:
         log({"event": "llm", "purpose": purpose, "result": "no_model"})
         raise LLMUnavailable("MISTRAL_MODEL not set")
-    if not os.environ.get("MISTRAL_API_KEY") and call is _call_mistral:
+    if not os.environ.get("MISTRAL_API_KEY") and real:
         log({"event": "llm", "purpose": purpose, "result": "no_api_key"})
         raise LLMUnavailable("MISTRAL_API_KEY not set")
 
     conn = _cache()
     try:
         for model in models:
-            key = _key(model, prompt, schema)
+            key = _key(model, prompt, schema, seed, temperature)
             row = conn.execute("SELECT output FROM cache WHERE key=?", (key,)).fetchone()
             if row:
                 log({"event": "llm", "purpose": purpose, "model": model, "prompt_hash": key[:16], "source": "cache"})

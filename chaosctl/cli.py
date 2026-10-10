@@ -207,7 +207,7 @@ def plan(dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run"),
 
 
 @app.command()
-def run(exp: list[str] = typer.Option(None, help="E1 (worker kill) / E2 (redis kill) or any catalog fault id; repeatable"),
+def run(exp: list[str] = typer.Option(None, help="fault alias (E1, E2, ... see `chaosctl kb`) or catalog fault name; repeatable"),
         auto: bool = typer.Option(False, help="run the whole planned campaign"),
         approve: bool = typer.Option(False, help="ask before each injection"),
         llm: bool = typer.Option(True, "--llm/--no-llm"),
@@ -216,10 +216,12 @@ def run(exp: list[str] = typer.Option(None, help="E1 (worker kill) / E2 (redis k
     from chaosctl.agents.campaign import build_campaign
     from chaosctl.runner import Runner, load_policy
 
-    names = {"E1": "worker_pod_kill", "E2": "redis_pod_kill"}
+    from chaosctl.fault_kb import load_kb
+
     if not exp and not auto:
-        raise typer.BadParameter("give --exp E1/E2/<fault id> or --auto")
-    only = None if auto else [names.get(e, e) for e in exp]
+        raise typer.BadParameter("give --exp E1/E2 (alias or catalog fault name) or --auto")
+    kb = load_kb()
+    only = None if auto else [kb.resolve(e) for e in exp]
     policy = load_policy()
     if queue_abort is not None:
         policy["defaults"]["abort"]["queue_waiting"] = min(queue_abort, policy["defaults"]["abort"]["queue_waiting"])
@@ -434,6 +436,56 @@ def diagnose(run: str = typer.Option(None, help="run id (default: newest)"), exp
                       f"blind root cause {shown}"
                       + ("" if out["llm_used"] else " [bold red](graded the TEMPLATE diagnosis, not the LLM: does not "
                                                     "count as an Agent 2 result)[/bold red]"))
+
+
+@app.command()
+def report(run: list[str] = typer.Option(None, help="run id(s); default: newest run with evidence"),
+           all_runs: bool = typer.Option(False, "--all", help="every run in reports/"),
+           llm: bool = typer.Option(True, "--llm/--no-llm", help="AI-written (default) or deterministic draft")):
+    """Findings report written by Agent 2: experiments, expected vs observed, weaknesses, fixes, resilience score."""
+    from chaosctl import report as rep
+
+    reports = ROOT / "reports"
+    dirs = rep.run_dirs(reports) if all_runs else [reports / r for r in run] if run else rep.run_dirs(reports)[-1:]
+    if not dirs:
+        console.print("[red]no run with evidence in reports/ (run an experiment first)[/red]")
+        raise typer.Exit(1)
+    exps = [e for d in dirs for e in rep.load_run(d)]
+    out = dirs[0] / "findings.md" if len(dirs) == 1 else reports / "findings.md"
+    console.print(f"Agent 2 is writing the report for {len(exps)} experiment(s) ..." if llm else "deterministic draft ...")
+    data = rep.write(exps, out, use_llm=llm)
+    if data["source"] != "llm":
+        console.print(f"[yellow]{data['source']}[/yellow]")
+    if o := data["overall"]:
+        console.print(f"[bold]Resilience score{' (Agent 2)' if data['source'] == 'llm' else ''}: "
+                      f"{o['score']} / 100 ({o['verdict']})[/bold]  ranking, least resilient first:")
+        for e in data["ranking"]["experiments"]:
+            console.print(f"  {e['rank'] or '-'}. {e['exp_ref']} {e['alias'] or ''} {e['title']}: "
+                          f"{'n/a' if e['score'] is None else e['score']} ({e['verdict'] or 'not scored'})")
+    if data["source"] == "llm":
+        for w in data["summary"]["weaknesses"][:5]:
+            console.print(f"  {w['severity']:<8} {w['title']}")
+        if data["unverified_numbers"]:
+            console.print(f"[yellow]fact-check flagged numbers: {data['unverified_numbers']}[/yellow]")
+    console.print(f"written: {out} and {out.with_suffix('.json')}")
+
+
+@app.command()
+def kb():
+    """Fault knowledge base: what each catalog fault means, and consistency problems."""
+    from chaosctl.agents.diagnosis import DETECTOR_IDS
+    from chaosctl.fault_kb import load_kb
+
+    k = load_kb()
+    for f, entry in k.catalog["faults"].items():
+        e = k.get(f)
+        state = "enabled" if entry.get("enabled") else "test only" if entry.get("test_only") else "disabled"
+        console.print(f"[bold]{e.alias or '--'}[/bold] {f:<22} tier {entry.get('tier')} {state:<9} "
+                      f"{e.title}{'' if e.documented else '  [yellow](no knowledge file)[/yellow]'}")
+    problems = k.check(DETECTOR_IDS)
+    console.print("[green]knowledge base consistent[/green]" if not problems else "[yellow]problems:[/yellow]")
+    for p in problems:
+        console.print(f"  - {p}")
 
 
 if __name__ == "__main__":

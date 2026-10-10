@@ -1,0 +1,13 @@
+# Knowledge for catalog fault worker_graceful_kill (format: docs/KNOWLEDGE_BASE.md)
+fault: worker_graceful_kill
+title: Worker graceful stop
+category: compute_loss
+summary: Delete one n8n-worker pod with a 30 s grace period, like a rolling update or node drain.
+hypothesis: >-
+  the worker finishes or hands back its running jobs within the grace period, so no in-flight
+  order is lost; W1 latency rises only while the replacement starts
+symptoms:
+  expected: [latency_degradation]
+  possible: [consumers_down, lost_work]
+grading_keywords: [worker, consumer]
+related_fixes: [graceful_shutdown, scale_workers, pod_disruption_budget]
