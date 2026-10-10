@@ -111,3 +111,8 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   arithmetic and fate names wrong (called visible losses "silent", sum of weights off), hence: totals computed in
   code from the AI's component scores, plain-sentence key facts, and a zero-count claims check. Then 3/3 live runs
   AI-written (~50-60 s, scores 54-56, no flags). Formula score kept as cross-check. 80 unit tests pass.
+- Ranked resilience score: report section "Resilience ranking (least resilient first)" (experiments by score, weakest
+  component each; components ranked by mean) in both AI and draft reports and in findings.json; dashboard panel
+  "Resilience score and ranking" (overall score + verdict, ranked bars, hover details) reading the newest findings.json,
+  and an 8th step "Report & score". Checked visually in light and dark; live AI run on two synthetic runs ranked the
+  Redis kill (13) below the worker kill (54). 84 unit tests pass.

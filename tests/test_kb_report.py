@@ -56,12 +56,16 @@ def make_run(root, run_id="r1010-163348", fault="worker_pod_kill", target="n8n-w
             "hypothesis": "W1 slows down, W2 keeps returning 200"}
     if journal:
         lines = [{"event": "agent1_scored", "candidates": [{"target": f"node:{target}", "fault": fault, "score": 0.86}]},
-                 {"event": "agent1_plan", "source": "llm", "plan": {"experiments": [item]}},
+                 {"event": "agent1_plan", "source": "llm", "plan": {"experiments": [item]},
+                  "verdicts": [{"exp_id": "exp-01", "verdict": "approve", "rationale": "tier 1",
+                                "abort": {"w1_error_rate": 0.5, "w1_p95_ms": 20000, "queue_waiting": 500,
+                                          "max_total_s": 180}}]},
                  {"event": "llm", "purpose": "injection_select", "model": "ministral-14b-latest", "source": "api"},
                  {"event": "experiment_start", "plan": item,
                   "guard": {"verdict": "approve", "blast_radius": ["node:n8n-main"],
                             "abort": {"w1_error_rate": 0.5, "w1_p95_ms": 20000, "queue_waiting": 500, "max_total_s": 180}}}]
-        (rdir / "journal.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines))
+        (rdir / "journal.jsonl").write_text("".join(json.dumps({"ts": 1791650000.0 + i, **x}) + "\n"
+                                                    for i, x in enumerate(lines)))      # like Journal.write
     if results:
         (rdir / "results.json").write_text(json.dumps([{
             "exp_id": "exp-01", "fault": fault, "target": target, "status": b["status"], "fates": b["fates"],
@@ -178,7 +182,7 @@ def test_report_full_run(tmp_path):
     sev = [w["severity"] for w in data["weaknesses"]]
     assert sev == sorted(sev, key=report.SEVERITY.get) and sev[0] == "Critical"
     assert data["fixes"][0]["by_agent2"] == 1                # Agent 2's own picks rank first
-    assert data["overall"]["mean"] == e["score"]["total"]
+    assert data["overall"]["score"] == e["score"]["total"]
 
 
 def test_report_with_only_evidence_files(tmp_path):
@@ -324,3 +328,44 @@ def test_damaged_journal_line_is_skipped(tmp_path):
         f.write('{"event": "llm", "trunc')            # run killed mid-write
     exps = report.load_run(rdir)
     assert exps[0]["plan_item"]["fault"] == "worker_pod_kill"
+
+
+# ------------------------------------------------------------ ranking + dashboard panel data
+
+def test_ranking_orders_least_resilient_first():
+    comps = lambda a, l: {"availability": a, "self_recovery": 90, "latency": l, "data_integrity": 50, "detectability": None}
+    rk = report.ranking([
+        {"exp_ref": "r1/exp-01", "title": "Worker pod kill", "alias": "E1", "target": "n8n-worker", "status": "completed",
+         "score": 56, "verdict": "fragile", "components": comps(80, 20)},
+        {"exp_ref": "r2/exp-01", "title": "Redis pod kill", "alias": "E2", "target": "redis", "status": "aborted",
+         "score": 31, "verdict": "failing", "components": comps(40, 0)},
+        {"exp_ref": "r3/exp-01", "title": "Skipped one", "alias": None, "target": "redis", "status": "skipped",
+         "score": None, "verdict": None, "components": {}},
+    ])
+    assert [e["exp_ref"] for e in rk["experiments"]] == ["r2/exp-01", "r1/exp-01", "r3/exp-01"]
+    assert [e["rank"] for e in rk["experiments"]] == [1, 2, None]               # unscored is listed, not ranked
+    assert rk["experiments"][0]["weakest"] == "latency"
+    names = [c["component"] for c in rk["components"]]
+    assert names[0] == "latency" and names[-1] == "detectability"               # n/a sorts last
+    lat = rk["components"][0]
+    assert lat["mean"] == 10.0 and lat["n"] == 2
+
+
+def test_both_report_paths_include_ranking(tmp_path):
+    rdir = make_run(tmp_path)
+    for kwargs in ({"use_llm": False}, {"call": fake_model([_exp_json()], [_summary_json()])}):
+        md, data = report.build(report.load_run(rdir), **kwargs)
+        assert "### Resilience ranking (least resilient first)" in md
+        assert data["ranking"]["experiments"][0]["exp_ref"] == "r1010-163348/exp-01"
+        assert {"score", "verdict"} <= set(data["overall"])
+
+
+def test_dashboard_reads_newest_report(tmp_path, monkeypatch):
+    from chaosctl import dashboard
+    monkeypatch.setattr(dashboard, "ROOT", tmp_path)
+    assert dashboard.resilience() is None                                       # no report yet
+    exps = report.load_run(make_run(tmp_path))
+    report.write(exps, tmp_path / "reports" / "r1010-163348" / "findings.md", use_llm=False)
+    r = dashboard.resilience()
+    assert r["path"] == "reports/r1010-163348/findings.json" and r["ranking"]["experiments"][0]["rank"] == 1
+    assert r["overall"]["score"] == r["ranking"]["experiments"][0]["score"]

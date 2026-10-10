@@ -113,10 +113,25 @@ def agent1_choice() -> dict | None:
             e = json.loads(line)
             if e["event"] == "agent1_scored":
                 scored = e["candidates"]
-            elif e["event"] == "agent1_plan" and (best is None or e["ts"] > best["ts"]):
-                best = {"ts": e["ts"], "source": e["source"], "candidates": scored or [],
+            elif e["event"] == "agent1_plan" and (best is None or e.get("ts", 0) > best["ts"]):
+                best = {"ts": e.get("ts", 0), "source": e["source"], "candidates": scored or [],
                         "plan": e["plan"]["experiments"], "verdicts": e["verdicts"]}
     return best
+
+
+def resilience() -> dict | None:
+    """Score and ranking from the newest `chaosctl report` (reports/<run>/findings.json or reports/findings.json)."""
+    files = [f for f in (ROOT / "reports").glob("*findings.json")] + list((ROOT / "reports").glob("r*/findings.json"))
+    for f in sorted(files, key=lambda f: f.stat().st_mtime, reverse=True):
+        try:
+            d = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if d.get("ranking") and d.get("overall"):
+            return {"path": str(f.relative_to(ROOT)), "generated": f.stat().st_mtime, "source": d.get("source"),
+                    "models": d.get("models") or [], "runs": d.get("runs") or [], "overall": d["overall"],
+                    "ranking": d["ranking"]}
+    return None
 
 
 def system_map() -> dict:
@@ -148,7 +163,7 @@ def serve(port: int = 8787) -> None:
                     pts, pods = list(sampler.points), dict(sampler.pods)
                 base = json.loads(baseline_path.read_text()) if baseline_path.exists() else None
                 body = {"now": time.time(), "points": pts, "pods": pods, "run": latest_run(),
-                        "agent1": agent1_choice(), "map": system_map(),
+                        "agent1": agent1_choice(), "map": system_map(), "resilience": resilience(),
                         "baseline": {"w1_p95": (base or {}).get("w1", {}).get("p95_ms"),
                                      "w1_success": (base or {}).get("w1", {}).get("success_rate"),
                                      "rate": (base or {}).get("rate")} if base else None}

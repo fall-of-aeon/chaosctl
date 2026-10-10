@@ -200,6 +200,40 @@ def recommended_fixes(analysed: list[tuple[dict, dict]], weak: list[dict]) -> li
                                       impact.get(r["impact"], 3), r["id"]))
 
 
+def ranking(entries: list[dict]) -> dict:
+    """Rank experiments least resilient first, and score components weakest first (mean over experiments).
+    entries: exp_ref, title, alias, target, status, score (None = not scored), verdict, components {name: score}."""
+    exps = sorted(entries, key=lambda e: (e["score"] is None, e["score"] if e["score"] is not None else 0, e["exp_ref"]))
+    ranked = []
+    for i, e in enumerate(exps, 1):
+        comps = {k: v for k, v in (e.get("components") or {}).items() if v is not None}
+        ranked.append({**{k: e.get(k) for k in ("exp_ref", "title", "alias", "target", "status", "score", "verdict")},
+                       "rank": i if e["score"] is not None else None,
+                       "weakest": min(comps, key=comps.get) if comps else None})
+    names = list(SCORE_CONFIG["weights"])
+    comp = []
+    for n in names:
+        vals = [e["components"][n] for e in entries if (e.get("components") or {}).get(n) is not None]
+        comp.append({"component": n, "weight": SCORE_CONFIG["weights"][n],
+                     "mean": round(sum(vals) / len(vals), 1) if vals else None, "n": len(vals)})
+    comp.sort(key=lambda c: (c["mean"] is None, c["mean"] if c["mean"] is not None else 0))
+    return {"experiments": ranked, "components": comp}
+
+
+def ranking_md(rk: dict) -> list[str]:
+    md = ["### Resilience ranking (least resilient first)", "",
+          "| Rank | Experiment | Fault → target | Score | Weakest component |", "|---|---|---|---|---|"]
+    for e in rk["experiments"]:
+        score = "n/a" if e["score"] is None else f"{e['score']} ({e['verdict']})"
+        name = f"{e['alias'] + ' ' if e['alias'] else ''}{e['title']} → {e['target'] or '?'}"
+        md.append(f"| {e['rank'] or '-'} | {e['exp_ref']} | {name} | {score} | "
+                  f"{(e['weakest'] or 'n/a').replace('_', ' ')} |")
+    md += ["", "| Component (weight) | Mean score | Experiments |", "|---|---|---|"]
+    md += [f"| {c['component'].replace('_', ' ')} ({c['weight']:.0%}) | {'n/a' if c['mean'] is None else c['mean']} | "
+           f"{c['n']} |" for c in rk["components"]]
+    return md + [""]
+
+
 def build_fallback(exps: list[dict], kb: FaultKB | None = None, reason: str | None = None) -> tuple[str, dict]:
     """Deterministic draft, used only when the AI writer is unavailable or disabled."""
     kb = kb or load_kb()
@@ -223,7 +257,15 @@ def build_fallback(exps: list[dict], kb: FaultKB | None = None, reason: str | No
                   f"{e['result'].get('target', '?')} | {e['result'].get('status', '?')} | "
                   f"{(str(s['total']) + ' (' + s['band'] + ')') if s.get('scored') else 'n/a'} | "
                   f"{'not run' if g is None else ('correct' if g['root_cause_correct'] else 'missed')} |")
-    md += ["", "## 2. Environment and baseline", ""]
+    rk = ranking([{"exp_ref": f"{e['run_id']}/{e['exp_id']}", "title": a["knowledge"].title,
+                   "alias": a["knowledge"].alias, "target": e["result"].get("target"),
+                   "status": e["result"].get("status"),
+                   "score": a["score"].get("total") if a["score"].get("scored") else None,
+                   "verdict": a["score"].get("band"),
+                   "components": {k: c["score"] for k, c in (a["score"].get("components") or {}).items()}}
+                  for e, a in analysed])
+    md += [""] + ranking_md(rk)
+    md += ["## 2. Environment and baseline", ""]
     base = next((e["bundle"].get("baseline") for e in exps if e["bundle"].get("baseline")), None) or {}
     w1, w2, q = base.get("w1") or {}, base.get("w2") or {}, base.get("queue") or {}
     md += [f"- Steady load: {base.get('rate', 'n/a')} orders/s (baseline captured over {base.get('duration_s', 'n/a')} s)",
@@ -259,8 +301,10 @@ def build_fallback(exps: list[dict], kb: FaultKB | None = None, reason: str | No
            "showed it, n/a if no such outage happened.",
            "Components without data are n/a and the other weights are rescaled (coverage is shown). The score "
            "compares experiments on this testbed; it is not a certified reliability measure.", ""]
-    data = {"source": f"fallback:{reason or 'llm_disabled'}", "runs": runs, "overall": overall, "weaknesses": weak,
-            "fixes": fixes,
+    data = {"source": f"fallback:{reason or 'llm_disabled'}", "runs": runs,
+            "overall": {"score": overall["mean"], "verdict": overall["band"], "worst": overall["worst"],
+                        "experiments": overall["experiments"]} if overall else None,
+            "ranking": rk, "weaknesses": weak, "fixes": fixes,
             "experiments": [{"run_id": e["run_id"], "exp_id": e["exp_id"], "fault": a["fault"],
                              "target": e["result"].get("target"), "status": e["result"].get("status"),
                              "score": a["score"], "grade": a["grade"], "expected_seen": a["expected_seen"],
@@ -303,7 +347,13 @@ def render_ai(analysed: list[tuple[dict, dict]], ai: dict, calls: list[dict]) ->
         r = reps[f"{e['run_id']}/{e['exp_id']}"]
         md.append(f"| {r.exp_ref} | {a['knowledge'].alias or ''} {a['knowledge'].title} | "
                   f"{e['result'].get('status', '?')} | {r.total()} ({r.verdict()}) | {r.headline} |")
-    md += ["", "## 2. Environment and baseline", "", s.environment, "", "## 3. Experiments", ""]
+    rk = ranking([{"exp_ref": r.exp_ref, "title": a["knowledge"].title, "alias": a["knowledge"].alias,
+                   "target": e["result"].get("target"), "status": e["result"].get("status"),
+                   "score": r.total(), "verdict": r.verdict(),
+                   "components": {c.component: c.score for c in r.scores}}
+                  for (e, a), r in ((ea, reps[f"{ea[0]['run_id']}/{ea[0]['exp_id']}"]) for ea in analysed)])
+    md += [""] + ranking_md(rk)
+    md += ["## 2. Environment and baseline", "", s.environment, "", "## 3. Experiments", ""]
     formula = {}
     for e, a in analysed:
         r = reps[f"{e['run_id']}/{e['exp_id']}"]
@@ -357,7 +407,7 @@ def render_ai(analysed: list[tuple[dict, dict]], ai: dict, calls: list[dict]) ->
         md += ["", "**Fact-check flags** (numbers not traceable to the measurements, or claims the counts contradict): "
                + "; ".join(f"{k}: {', '.join(v)}" for k, v in ai["unverified_numbers"].items())]
     data = {"source": "llm", "models": models, "runs": runs,
-            "overall": {"score": s.overall_score, "verdict": reporter.band(s.overall_score)},
+            "overall": {"score": s.overall_score, "verdict": reporter.band(s.overall_score)}, "ranking": rk,
             "summary": s.model_dump(),
             "experiments": [{**r.model_dump(), "total": r.total(), "verdict": r.verdict()} for r in ai["experiments"]],
             "formula_cross_check": formula, "unverified_numbers": ai["unverified_numbers"], "llm_calls": calls}

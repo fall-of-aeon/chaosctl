@@ -404,15 +404,19 @@ def report(run: list[str] = typer.Option(None, help="run id(s); default: newest 
     out = dirs[0] / "findings.md" if len(dirs) == 1 else reports / "findings.md"
     console.print(f"Agent 2 is writing the report for {len(exps)} experiment(s) ..." if llm else "deterministic draft ...")
     data = rep.write(exps, out, use_llm=llm)
+    if data["source"] != "llm":
+        console.print(f"[yellow]{data['source']}[/yellow]")
+    if o := data["overall"]:
+        console.print(f"[bold]Resilience score{' (Agent 2)' if data['source'] == 'llm' else ''}: "
+                      f"{o['score']} / 100 ({o['verdict']})[/bold]  ranking, least resilient first:")
+        for e in data["ranking"]["experiments"]:
+            console.print(f"  {e['rank'] or '-'}. {e['exp_ref']} {e['alias'] or ''} {e['title']}: "
+                          f"{'n/a' if e['score'] is None else e['score']} ({e['verdict'] or 'not scored'})")
     if data["source"] == "llm":
-        o = data["overall"]
-        console.print(f"[bold]Resilience score (Agent 2): {o['score']} / 100 ({o['verdict']})[/bold]")
         for w in data["summary"]["weaknesses"][:5]:
             console.print(f"  {w['severity']:<8} {w['title']}")
         if data["unverified_numbers"]:
             console.print(f"[yellow]fact-check flagged numbers: {data['unverified_numbers']}[/yellow]")
-    else:
-        console.print(f"[yellow]{data['source']}[/yellow]")
     console.print(f"written: {out} and {out.with_suffix('.json')}")
 
 

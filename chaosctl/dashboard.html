@@ -101,6 +101,23 @@ td.num { text-align: right; font-weight: 600; }
 .cand { width: 100%; font-size: 13px; }
 .cand td, .cand th { padding: 5px 6px; }
 .cand tr.pick td { font-weight: 650; }
+.resil { display: grid; gap: 18px; grid-template-columns: 1fr; }
+@media (min-width: 1100px) { .resil { grid-template-columns: 230px 1.3fr 1fr; } }
+.rank-title { color: var(--text-secondary); font-size: 13px; margin-bottom: 6px; }
+.bars { display: grid; gap: 2px; }
+.bar-row { display: grid; grid-template-columns: minmax(130px, 42%) 1fr; align-items: center; gap: 10px;
+  padding: 4px 4px; border-radius: 6px; }
+.bar-row:hover, .bar-row:focus-visible { background: var(--surface-0); outline: none; }
+.bar-label { font-size: 13px; overflow-wrap: anywhere; }
+.bar-label .sub { display: block; color: var(--text-muted); font-size: 12px; }
+.bar-track { position: relative; display: flex; align-items: center; height: 18px; border-left: 1px solid var(--axis); }
+.bar-track::after { content: ""; position: absolute; left: calc(100% - 44px); top: -3px; bottom: -3px; width: 1px;
+  background: var(--grid); }  /* 100 = the maximum score */
+.bar-fill { height: 18px; background: var(--series-1); border-radius: 0 4px 4px 0; }
+.bar-row:hover .bar-fill, .bar-row:focus-visible .bar-fill { filter: brightness(1.15); }
+.bar-val { padding-left: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.verdict { display: inline-flex; gap: 6px; align-items: center; font-weight: 600; }
+.vdot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .h-tag { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
 </style>
 </head>
@@ -162,6 +179,7 @@ td.num { text-align: right; font-weight: 600; }
     <div class="card" id="exp-fates"><h2>Fate of in-flight requests</h2><div class="empty">Appears when an experiment finishes.</div></div>
   </section>
   <section class="card" id="agent2" style="margin-top:12px"><h2>Agent 2 · blind diagnosis</h2><div class="empty">Run <code>chaosctl diagnose</code> after an experiment.</div></section>
+  <section class="card" id="resil-card" style="margin-top:12px"><h2 style="font-size:14px;margin:0 0 8px">Resilience score and ranking</h2><div class="empty">No report yet. Run <code>uv run chaosctl report</code> after an experiment.</div></section>
 </div>
 <section class="wrap" style="padding-top:0">
   <div class="card" id="chat">
@@ -416,6 +434,7 @@ const STEPS = [
   ["Impact / auto-stop", "Watch customers feel it: latency up, queue piling up, async customers still told OK. If a safety limit is crossed, the controller stops the experiment by itself."],
   ["Recover", "The fault is removed, Kubernetes brings the pod back, the watchdog checks every service is healthy, then we check what happened to each in-flight order."],
   ["Agent 2 diagnoses", "Agent 2, not told what we broke, reads the evidence, reasons step by step and recommends fixes from a vetted playbook."],
+  ["Report & score", "Agent 2 writes the findings report: weaknesses ranked by severity, fixes, and a 0-100 resilience score per experiment, ranked from least to most resilient."],
 ];
 function currentStep() {
   const ev = state.run?.events || [];
@@ -425,7 +444,7 @@ function currentStep() {
   const after = ev.filter((e) => e.ts >= start.ts);
   const has = (k) => after.some((e) => e.event === k);
   const st = [...after].reverse().find((e) => e.event === "state")?.to;
-  if (has("experiment_end")) return state.run?.diagnosis ? 6 : 5;
+  if (has("experiment_end")) return !state.run?.diagnosis ? 5 : (state.resilience?.runs || []).includes(state.run.run_id) ? 7 : 6;
   if (st === "RECOVERY_WAIT" || st === "DONE") return 5;
   if (has("inject") || has("abort")) return 4;
   const warm = after.find((e) => e.event === "warmup");
@@ -493,7 +512,74 @@ function renderAgent1() {
     <div style="color:var(--text-muted);font-size:12px;margin-top:6px">Score = 0.4×criticality + 0.3×untested + 0.2×new info − 0.1×risk. Mistral chooses among these; the guard can only make limits stricter.</div>`;
 }
 
-function render() { if (!state) return; renderSteps(); renderMap(); renderAgent1(); renderTop(); renderCharts(); renderExp(); renderDiag(); }
+const VERDICT_STATUS = {"resilient": "var(--good)", "degraded but recovered": "var(--warning)", "fragile": "var(--serious)", "failing": "var(--critical)"};
+const escq = (t) => esc(t).replace(/"/g, "&quot;");
+const verdictBadge = (v) => `<span class="verdict"><span class="vdot" style="background:${VERDICT_STATUS[v] || "var(--axis)"}"></span>${esc(v || "not scored")}</span>`;
+function barRow(i, kind, label, sub, value, aria) {
+  const w = value == null ? 0 : Math.max(0, Math.min(100, value));
+  return `<div class="bar-row" tabindex="0" data-kind="${kind}" data-i="${i}" aria-label="${escq(aria)}">
+    <div class="bar-label">${esc(label)}<span class="sub">${esc(sub)}</span></div>
+    <div class="bar-track"><div class="bar-fill" style="width:calc((100% - 44px) * ${w / 100})"></div><span class="bar-val">${value == null ? "n/a" : esc(value)}</span></div></div>`;
+}
+function barTip(el, ev) {
+  const r = state.resilience, i = +el.dataset.i, tip = $("tip");
+  const lines = [];
+  if (el.dataset.kind === "exp") {
+    const e = r.ranking.experiments[i];
+    lines.push([`${e.rank ? "#" + e.rank + " " : ""}${e.alias ? e.alias + " " : ""}${e.title}`, ""], ["experiment", e.exp_ref],
+               ["target", e.target || "?"], ["status", e.status || "?"], ["score", e.score == null ? "n/a" : e.score + " / 100"],
+               ["verdict", e.verdict || "not scored"], ["weakest component", (e.weakest || "n/a").replaceAll("_", " ")]);
+  } else {
+    const c = r.ranking.components[i];
+    lines.push([c.component.replaceAll("_", " "), ""], ["mean score", c.mean == null ? "n/a" : c.mean + " / 100"],
+               ["weight in total", Math.round(c.weight * 100) + "%"], ["experiments scored", String(c.n)]);
+  }
+  tip.replaceChildren(...lines.map(([k, v], j) => {
+    const row = document.createElement("div");
+    if (j === 0) { row.style.fontWeight = "600"; row.style.marginBottom = "4px"; row.textContent = k; return row; }
+    row.className = "row";
+    const a = document.createElement("span"); a.className = "k"; a.textContent = k;
+    const b = document.createElement("span"); b.textContent = v;
+    row.append(a, b); return row;
+  }));
+  const box = ev ? {x: ev.clientX, y: ev.clientY} : (() => { const b = el.getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.bottom}; })();
+  tip.style.display = "block";
+  tip.style.left = Math.min(box.x + 14, innerWidth - 240) + "px";
+  tip.style.top = (box.y + 14) + "px";
+}
+let resilKey = null;
+function renderResil() {
+  const r = state.resilience;
+  const key = JSON.stringify(r);
+  if (!r || key === resilKey) return;
+  resilKey = key;
+  const ai = r.source === "llm";
+  const exps = r.ranking.experiments, comps = r.ranking.components;
+  $("resil-card").innerHTML = `<h2 style="font-size:14px;margin:0 0 8px">Resilience score and ranking
+      <span class="h-tag">${ai ? "scored by Agent 2 · " + esc((r.models || []).join(", ") || "Mistral") : "deterministic draft"}</span></h2>
+    <div class="resil">
+      <div class="kpi"><div class="label">Overall resilience</div>
+        <div class="value" style="font-variant-numeric:normal">${esc(r.overall.score)}<span style="font-size:16px;color:var(--text-muted);font-weight:600"> / 100</span></div>
+        <div style="margin:4px 0 6px">${verdictBadge(r.overall.verdict)}</div>
+        <div class="note">${exps.length} experiment${exps.length === 1 ? "" : "s"} · ${esc((r.runs || []).join(", "))}<br>
+          report: <code>${esc(r.path)}</code> · ${new Date(r.generated * 1000).toLocaleString()}</div></div>
+      <div><div class="rank-title">Experiments, least resilient first <span style="color:var(--text-muted)">(score 0-100, line = 100)</span></div><div class="bars">${exps.map((e, i) =>
+        barRow(i, "exp", `${e.rank ? e.rank + ". " : ""}${e.alias ? e.alias + " " : ""}${e.title} → ${e.target || "?"}`,
+               `${e.verdict || "not scored"} · weakest: ${(e.weakest || "n/a").replaceAll("_", " ")}`, e.score,
+               `${e.title}: score ${e.score ?? "n/a"} of 100, ${e.verdict || "not scored"}`)).join("")}</div></div>
+      <div><div class="rank-title">Weakest components <span style="color:var(--text-muted)">(mean over experiments, 0-100)</span></div><div class="bars">${comps.map((c, i) =>
+        barRow(i, "comp", c.component.replaceAll("_", " "), `weight ${Math.round(c.weight * 100)}% · ${c.n} scored`, c.mean,
+               `${c.component.replaceAll("_", " ")}: mean ${c.mean ?? "n/a"} of 100`)).join("")}</div></div>
+    </div>
+    <div style="color:var(--text-muted);font-size:12px;margin-top:8px">Score 0-100 per experiment = weighted mean of availability 30%, self-recovery 25%, latency 20%, data integrity 15%, detectability 10%. Full analysis in the findings report.</div>`;
+  for (const el of $("resil-card").querySelectorAll(".bar-row")) {
+    el.onpointermove = (ev) => barTip(el, ev);
+    el.onfocus = () => barTip(el, null);
+    el.onpointerleave = el.onblur = () => { $("tip").style.display = "none"; };
+  }
+}
+
+function render() { if (!state) return; renderSteps(); renderMap(); renderAgent1(); renderTop(); renderCharts(); renderExp(); renderDiag(); renderResil(); }
 
 async function poll() {
   try { state = await (await fetch("/api/state", {cache: "no-store"})).json(); render(); }

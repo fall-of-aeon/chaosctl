@@ -210,7 +210,7 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
 ## 2.6 The dashboard (`chaosctl dashboard` → http://127.0.0.1:8787)
 
 **Top to bottom:**
-1. **Step bar**: Map → Baseline → Agent 1 decides → Inject → Impact/auto-stop → Recover → Agent 2 diagnoses. The current
+1. **Step bar**: Map → Baseline → Agent 1 decides → Inject → Impact/auto-stop → Recover → Agent 2 diagnoses → Report & score. The current
    step is highlighted, with a plain-English sentence to read aloud.
 2. **System map**: services and data-flow arrows. Green/red = live health. 💥 = Agent 1's target. Dashed orange = blast radius.
 3. **Agent 1 panel**: the menu of allowed experiments with scores, the pick (✅), the reason, the prediction and the safety limits.
@@ -223,7 +223,10 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
    - markers on every chart: inject / pod ready / AUTO-STOP / recovered / end
 7. **Experiment panel** (fault, why, hypothesis, auto-stop reason, recovery time, timeline) and the **fate table**.
 8. **Agent 2 panel**: its reasoning steps, root cause and recommended fixes.
-9. **"Ask Agent 2" chat** (RAG):
+9. **Resilience score and ranking** (from the newest `chaosctl report`): overall score and verdict, experiments ranked
+   least resilient first, and the weakest score components (hover a bar for details). Says "No report yet" until
+   `chaosctl report` has run.
+10. **"Ask Agent 2" chat** (RAG):
    - (a) Searches ~80 small records: run results, diagnoses, Kubernetes events, log lines, the fix playbook and `docs/` (FACTS, PROGRESS, JUDGES_GUIDE), using BM25 keyword search.
    - (b) Mistral answers only from those records and must cite them.
    - (c) If Mistral is down, the chat shows the matching records instead.
@@ -262,7 +265,7 @@ The dashboard keeps the last 5 minutes of chart points in memory.
 git clone https://github.com/fall-of-aeon/chaosctl.git && cd chaosctl
 cp .env.example .env                 # put your MISTRAL_API_KEY in .env (never commit .env)
 uv sync                              # Python environment + dependencies
-uv run pytest                        # 80 unit tests, no cluster needed: all should pass
+uv run pytest                        # 84 unit tests, no cluster needed: all should pass
 ```
 
 Optionally, check that Mistral works:
@@ -436,7 +439,7 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 | Done (needs a real run) | **AI-written findings report** (`chaosctl report` → `reports/<run>/findings.md` + `.json`) | Agent 2 writes it, validated and fact-checked; tested live with Mistral on synthetic runs (3/3 AI-written), not yet on real cluster evidence. See docs/KNOWLEDGE_BASE.md |
 | Done (needs a real run) | **Resilience score** (Agent 2, rubric-based) | Weights availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 %; formula cross-check in `chaosctl/score.py`. See docs/KNOWLEDGE_BASE.md |
 | **Must** | Architecture one-pager, demo video (≤ 3 min), team form | The team form lists Mistral (model names), LangGraph, Chaos Mesh, Prometheus, Grafana, Kind, n8n; data = synthetic only |
-| **Must** | **Clean run from scratch** on a fresh clone, following only this README | `kind delete cluster --name chaos` first |
+| **Must** | **Clean run from scratch** on a fresh clone, following only this README | `kind delete cluster --name chaos` first. Full test plan as an AI-agent prompt: docs/E2E_TEST_PROMPT.md |
 | Should | Re-run E2 after the Redis fix (`k8s/redis-hardened.yaml`) to show before/after | Stretch goal "re-run after a fix" |
 | Should | Detectability: alert rules (PrometheusRule) and when they fired | Needs Prometheus back on (CPU cost) |
 | **Must** | Mistral rate limits for demo day (see 3.5) | Check usage in console.mistral.ai, or pre-run the demo once so answers are cached |

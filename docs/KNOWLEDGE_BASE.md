@@ -83,6 +83,13 @@ If Mistral is unreachable or the answers stay invalid, a deterministic draft is 
 top as **"Deterministic draft, not AI-written"** (README rule: the LLM can never hang the demo). `--no-llm` forces
 that draft. Measured on a synthetic E1 run: 3/3 runs AI-written, ~50-60 s each, scores 54-56, no fact-check flags.
 
+## Resilience ranking
+Every report (AI-written or draft) has a **"Resilience ranking (least resilient first)"** table in section 1, also in
+`findings.json` under `ranking`: experiments sorted by score (unscored ones listed last, without a rank), each with its
+weakest component, plus the five components ranked weakest first by their mean over all experiments. The dashboard's
+"Resilience score and ranking" panel shows the newest `findings.json`. No fix needs to be applied: the ranking compares
+faults against the same, unfixed system (before/after a fix is the on-hold Agent 3 idea).
+
 ## Resilience score
 Agent 2 scores each component using this rubric (also given to it verbatim, see `RUBRIC` in reporter.py):
 
