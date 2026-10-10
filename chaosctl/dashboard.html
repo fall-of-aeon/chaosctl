@@ -397,7 +397,7 @@ function renderDiag() {
   const dg = state.run?.diagnosis;
   if (!dg) return;
   const tag = {observe: "var(--series-1)", hypothesize: "var(--series-2)", check: "var(--warning)", conclude: "var(--good)"};
-  $("agent2").innerHTML = `<h2>Agent 2 · blind diagnosis · ${dg.exp_id} <span class="h-tag">not told what was injected · ${dg.source.startsWith("llm") ? "Gemini" : "deterministic fallback"}</span></h2>
+  $("agent2").innerHTML = `<h2>Agent 2 · blind diagnosis · ${dg.exp_id} <span class="h-tag">not told what was injected · ${dg.source.startsWith("llm") ? "Mistral" : "deterministic fallback"}</span></h2>
     <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
       <div><div class="label" style="color:var(--text-secondary);margin-bottom:6px">Reasoning</div>
         <ol style="margin:0;padding-left:0;list-style:none;display:grid;gap:6px">${dg.thoughts.map((t) =>
@@ -482,7 +482,7 @@ function renderAgent1() {
       <td class="num">${c.tier}</td><td class="num">${c.score.toFixed(2)}</td><td>${c.untested ? "untested" : "tested before"}</td></tr>`;
   }).join("");
   const p = a.plan[0], v = p ? verdict[p.id] : null;
-  $("agent1").innerHTML = `<h2 style="font-size:14px;margin:0 0 6px">Agent 1: what to break, and why <span class="h-tag">${a.source === "llm" ? "Gemini" : "deterministic fallback"}</span></h2>
+  $("agent1").innerHTML = `<h2 style="font-size:14px;margin:0 0 6px">Agent 1: what to break, and why <span class="h-tag">${a.source === "llm" ? "Mistral" : "deterministic fallback"}</span></h2>
     <table class="cand"><thead><tr><th></th><th>Allowed experiment</th><th>Target</th><th style="text-align:right">Risk tier</th><th style="text-align:right">Score</th><th>History</th></tr></thead><tbody>${rows}</tbody></table>
     ${p ? `<dl style="margin-top:10px;display:grid;grid-template-columns:max-content 1fr;gap:4px 10px;font-size:13px">
       <dt style="color:var(--text-secondary)">Picked</dt><dd style="margin:0"><b>${p.fault.replaceAll("_", " ")} → ${p.target.replace("node:", "")}</b></dd>
@@ -490,7 +490,7 @@ function renderAgent1() {
       <dt style="color:var(--text-secondary)">Prediction</dt><dd style="margin:0">${p.hypothesis} <span class="h-tag">hypothesis</span></dd>
       ${v ? `<dt style="color:var(--text-secondary)">Safety guard</dt><dd style="margin:0">${v.verdict}: ${v.rationale}. Auto-stop if W1 errors &gt; ${Math.round(v.abort.w1_error_rate * 100)}%, p95 &gt; ${v.abort.w1_p95_ms / 1000}s, queue &gt; ${v.abort.queue_waiting}, or after ${v.abort.max_total_s}s.</dd>` : ""}
     </dl>` : ""}
-    <div style="color:var(--text-muted);font-size:12px;margin-top:6px">Score = 0.4×criticality + 0.3×untested + 0.2×new info − 0.1×risk. Gemini chooses among these; the guard can only make limits stricter.</div>`;
+    <div style="color:var(--text-muted);font-size:12px;margin-top:6px">Score = 0.4×criticality + 0.3×untested + 0.2×new info − 0.1×risk. Mistral chooses among these; the guard can only make limits stricter.</div>`;
 }
 
 function render() { if (!state) return; renderSteps(); renderMap(); renderAgent1(); renderTop(); renderCharts(); renderExp(); renderDiag(); }

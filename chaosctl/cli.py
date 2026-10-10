@@ -133,7 +133,7 @@ def baseline(duration: int = typer.Option(120, help="seconds of steady load"),
 
 @app.command()
 def plan(dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run"),
-         llm: bool = typer.Option(True, "--llm/--no-llm", help="use Gemini (falls back automatically)"),
+         llm: bool = typer.Option(True, "--llm/--no-llm", help="use Mistral (falls back automatically)"),
          offline: bool = typer.Option(False, help="graph from fixtures instead of the cluster")):
     """Injection agent: ranked plan with graph-cited reasons and guard verdicts. Never executes."""
     import yaml

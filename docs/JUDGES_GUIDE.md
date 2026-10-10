@@ -47,10 +47,10 @@ Before: `uv run chaosctl dashboard` and open http://127.0.0.1:8787 next to the t
 > all five services are green. This is our baseline."
 
 **3. Agent 1 decides (deliverable: AI-driven failure injection)**: `uv run chaosctl plan --dry-run`
-> "Agent 1 (Gemini) gets the dependency map and the list of allowed experiments. It picks what to break, explains
+> "Agent 1 (Mistral) gets the dependency map and the list of allowed experiments. It picks what to break, explains
 > why citing the map's IDs, and predicts what will happen. A validator rejects anything not in our catalog, and a
 > deterministic policy guard sets the safety limits and the order: the lower-risk worker kill must pass before
-> it may touch Redis. If Gemini is down, a deterministic plan is used, so the demo never hangs."
+> it may touch Redis. If Mistral is down, a deterministic plan is used, so the demo never hangs."
 
 **4. Inject (deliverable: failure injection + visible impact)**: `uv run chaosctl run --exp E1`
 > "We only inject while orders are in flight; the harness records exactly which ones. Watch the dashboard: active

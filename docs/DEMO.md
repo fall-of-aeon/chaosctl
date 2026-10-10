@@ -6,7 +6,7 @@
 3. Run `uv run chaosctl baseline --duration 120`.
 4. In terminal 1, run `uv run chaosctl dashboard` and open http://127.0.0.1:8787.
 5. Log in to the n8n UI (http://127.0.0.1:15678) to show the two workflows.
-6. Check the Gemini quota (README 3.5). If it is exhausted, the AI panels show the deterministic fallback.
+6. Check the Mistral rate limits and usage (README 3.5). If calls fail, the AI panels show the deterministic fallback.
 
 | # | Time | Show | Command (terminal 2) | What to say |
 |---|---|---|---|---|

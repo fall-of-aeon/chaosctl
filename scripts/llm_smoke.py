@@ -1,4 +1,4 @@
-"""Phase 0: one structured-output call against GEMINI_MODEL. Prints result, never the key."""
+"""Phase 0: one structured-output call against MISTRAL_MODEL. Prints result, never the key."""
 import os
 import time
 
@@ -19,4 +19,4 @@ out = llm.generate_json(
     Smoke,
     journal=print,
 )
-print("model:", os.environ.get("GEMINI_MODEL"), "| ok:", out.model_dump(), "| %.1fs" % (time.monotonic() - t0))
+print("model:", os.environ.get("MISTRAL_MODEL"), "| ok:", out.model_dump(), "| %.1fs" % (time.monotonic() - t0))

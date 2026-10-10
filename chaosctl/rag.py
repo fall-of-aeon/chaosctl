@@ -2,7 +2,7 @@
 
 Corpus: experiment results, Agent 2 diagnoses, evidence (events, log lines), the fix playbook, and
 docs/FACTS.md + docs/PROGRESS.md. Retrieval is BM25 over small chunks (no extra dependencies).
-Gemini must answer from the retrieved chunks and cite their ids; uncited or unknown ids are dropped,
+Mistral must answer from the retrieved chunks and cite their ids; uncited or unknown ids are dropped,
 and any LLM failure falls back to showing the best-matching chunks. Advisory only.
 """
 from __future__ import annotations
@@ -126,9 +126,9 @@ QUESTION: {question}"""
         llm.budget.used = 0  # chat is interactive: budget is per question, not per campaign
         a = llm.generate_json("rag_chat", prompt, Answer)
         cited = [c for c in a.cited if c in valid] or [hits[0]["id"]]
-        return {"answer": a.answer, "sources": [_src(h) for h in hits if h["id"] in cited], "source": "gemini"}
+        return {"answer": a.answer, "sources": [_src(h) for h in hits if h["id"] in cited], "source": "mistral"}
     except llm.LLMUnavailable as exc:
-        return {"answer": "Gemini is unavailable, so here are the most relevant records I found:",
+        return {"answer": "Mistral is unavailable, so here are the most relevant records I found:",
                 "sources": [_src(h) for h in hits[:4]], "source": f"fallback: {exc}"}
 
 

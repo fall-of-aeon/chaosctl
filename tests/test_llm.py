@@ -12,8 +12,8 @@ class Pick(BaseModel):
 @pytest.fixture(autouse=True)
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "STATE_DIR", tmp_path)
-    monkeypatch.setenv("GEMINI_MODEL", "primary")
-    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "fallback")
+    monkeypatch.setenv("MISTRAL_MODEL", "primary")
+    monkeypatch.setenv("MISTRAL_FALLBACK_MODEL", "fallback")
     monkeypatch.setattr(llm, "budget", llm._Budget())
     monkeypatch.setattr(llm.time, "sleep", lambda _s: None)
 
@@ -68,7 +68,7 @@ def test_budget_exhaustion(monkeypatch):
 
 
 def test_missing_key_raises_unavailable(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     with pytest.raises(llm.LLMUnavailable):
         llm.generate_json("t", "p", Pick)
 
@@ -76,3 +76,44 @@ def test_missing_key_raises_unavailable(monkeypatch):
 def test_redact():
     out = llm.redact("N8N_ENCRYPTION_KEY=abc123 password: hunter2 ok")
     assert "abc123" not in out and "hunter2" not in out and "ok" in out
+
+
+class _Resp:
+    def __init__(self, status_code, payload):
+        self.status_code, self._payload, self.text = status_code, payload, str(payload)
+
+    def json(self):
+        return self._payload
+
+
+def test_mistral_request_is_strict_json_schema(monkeypatch):
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    sent = {}
+
+    def fake_post(url, json, timeout, headers):
+        sent.update(url=url, body=json, headers=headers)
+        return _Resp(200, {"choices": [{"message": {"content": '{"choice": "E1", "reason": "r"}'}}]})
+
+    monkeypatch.setattr(llm.httpx, "post", fake_post)
+    out = llm.generate_json("t", "p", Pick)
+    assert out.choice == "E1"
+    rf = sent["body"]["response_format"]
+    assert sent["url"] == llm.MISTRAL_URL and sent["headers"]["Authorization"] == "Bearer k"
+    assert rf["type"] == "json_schema" and rf["json_schema"]["strict"] is True
+    assert rf["json_schema"]["schema"]["additionalProperties"] is False
+    assert sent["body"]["model"] == "primary"
+
+
+def test_mistral_429_retries_then_falls_back(monkeypatch):
+    monkeypatch.setenv("MISTRAL_API_KEY", "k")
+    seen = []
+
+    def fake_post(url, json, timeout, headers):
+        seen.append(json["model"])
+        if json["model"] == "primary":
+            return _Resp(429, {"message": "rate limited"})
+        return _Resp(200, {"choices": [{"message": {"content": '{"choice": "E2", "reason": "ok"}'}}]})
+
+    monkeypatch.setattr(llm.httpx, "post", fake_post)
+    assert llm.generate_json("t", "p", Pick).choice == "E2"
+    assert seen == ["primary"] * llm.MAX_RETRIES + ["fallback"]

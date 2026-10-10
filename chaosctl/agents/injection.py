@@ -1,6 +1,6 @@
 """Agent 1: Injection agent (BUILD_PLAN 9.3).
 
-score_candidates (Python) -> llm_select (Gemini) -> validate -> policy_guard (deterministic).
+score_candidates (Python) -> llm_select (Mistral) -> validate -> policy_guard (deterministic).
 The LLM only chooses among catalog candidates and explains; the guard decides.
 """
 from __future__ import annotations

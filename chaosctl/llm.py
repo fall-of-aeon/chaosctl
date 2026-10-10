@@ -1,4 +1,4 @@
-"""Thin Gemini wrapper: structured JSON out, cached, bounded, never hangs.
+"""Thin Mistral wrapper: structured JSON out, cached, bounded, never hangs.
 
 Callers use generate_json(purpose, prompt, Model) and must catch LLMUnavailable
 and fall back to their deterministic path. Nothing here makes safety decisions.
@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Callable, TypeVar
 
+import httpx
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 
@@ -27,7 +28,6 @@ MAX_RETRIES = 3
 
 _SECRET_PATTERNS = [
     re.compile(r"(?i)(password|passwd|secret|token|api[_-]?key|encryption[_-]?key)\s*[=:]\s*\S+"),
-    re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),
 ]
 
 
@@ -67,34 +67,52 @@ def _key(model: str, prompt: str, schema: dict) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
-def _call_gemini(model: str, prompt: str, schema: dict) -> str:
-    from google import genai
-    from google.genai import types
+MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 
-    client = genai.Client(
-        api_key=os.environ["GEMINI_API_KEY"],
-        http_options=types.HttpOptions(timeout=TIMEOUT_S * 1000),
-    )
-    # generate_content, not the Interactions API: measured 6.5 s vs 45 s for the
-    # same structured call on 2026-10-10 (docs/FACTS.md).
-    resp = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.1,
-            seed=7,
-            response_mime_type="application/json",
-            response_json_schema=schema,
-        ),
-    )
-    return resp.text or ""
+
+class MistralHTTPError(Exception):
+    def __init__(self, status_code: int, body: str) -> None:
+        super().__init__(f"HTTP {status_code}: {body[:200]}")
+        self.status_code = status_code
+
+
+def _strict(node):
+    """Mistral strict json_schema mode wants additionalProperties: false on every object."""
+    if isinstance(node, dict):
+        if node.get("type") == "object":
+            node["additionalProperties"] = False
+        for v in node.values():
+            _strict(v)
+    elif isinstance(node, list):
+        for v in node:
+            _strict(v)
+    return node
+
+
+def _call_mistral(model: str, prompt: str, schema: dict) -> str:
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "random_seed": 7,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": schema.get("title", "Output"), "schema": _strict(json.loads(json.dumps(schema))),
+                            "strict": True},
+        },
+    }
+    resp = httpx.post(MISTRAL_URL, json=body, timeout=TIMEOUT_S,
+                      headers={"Authorization": f"Bearer {os.environ['MISTRAL_API_KEY']}"})
+    if resp.status_code != 200:
+        raise MistralHTTPError(resp.status_code, resp.text)
+    return resp.json()["choices"][0]["message"]["content"] or ""
 
 
 def _retryable(exc: Exception) -> bool:
     code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
     if code in (429, 500, 502, 503, 504):
         return True
-    return isinstance(exc, (TimeoutError, ConnectionError)) or "timeout" in type(exc).__name__.lower()
+    return isinstance(exc, (TimeoutError, ConnectionError, httpx.TransportError)) or "timeout" in type(exc).__name__.lower()
 
 
 def generate_json(
@@ -105,15 +123,15 @@ def generate_json(
     call: Callable[[str, str, dict], str] | None = None,
 ) -> T:
     """Return a validated model_cls instance or raise LLMUnavailable."""
-    call = call or _call_gemini
+    call = call or _call_mistral
     prompt = redact(prompt)
     schema = model_cls.model_json_schema()
-    models = [m for m in (os.environ.get("GEMINI_MODEL"), os.environ.get("GEMINI_FALLBACK_MODEL")) if m]
+    models = [m for m in (os.environ.get("MISTRAL_MODEL"), os.environ.get("MISTRAL_FALLBACK_MODEL")) if m]
     log = journal or (lambda _e: None)
 
-    if not os.environ.get("GEMINI_API_KEY") and call is _call_gemini:
+    if not os.environ.get("MISTRAL_API_KEY") and call is _call_mistral:
         log({"event": "llm", "purpose": purpose, "result": "no_api_key"})
-        raise LLMUnavailable("GEMINI_API_KEY not set")
+        raise LLMUnavailable("MISTRAL_API_KEY not set")
 
     conn = _cache()
     try:

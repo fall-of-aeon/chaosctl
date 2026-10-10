@@ -76,19 +76,19 @@ Everything runs in **our own local Kubernetes cluster** on one laptop. We never 
 | **Fate table** | For every in-flight request: completed once / lost silently / lost with an error / duplicated / phantom success. |
 | **Phantom success** | The customer got an error, but the order was actually saved. |
 | **Silent failure** | The customer was told "OK", but the work never happened. |
-| **Agent 1** | AI (Gemini) that chooses which failure to inject and explains why. |
-| **Agent 2** | AI (Gemini) that is *not told* what was broken, works out what went wrong from evidence, and recommends fixes. |
+| **Agent 1** | AI (Mistral) that chooses which failure to inject and explains why. |
+| **Agent 2** | AI (Mistral) that is *not told* what was broken, works out what went wrong from evidence, and recommends fixes. |
 | **Safety controller** | Plain Python code (no AI) that watches the system every second and stops the experiment if limits are crossed. |
 
 ## 1.4 Big design decisions (and why)
 1. **Target app = n8n in queue mode** on Kubernetes (main + worker + Redis + Postgres + a mock downstream API). The organizers confirmed n8n's license is fine.
 2. **Agents decide and explain; the harness executes and enforces.** The AI never runs commands. It returns JSON that we validate. Only our code creates or deletes failures, and only from a fixed catalog.
 3. **Safety is never AI-controlled.** Limits, aborts, kill switch and recovery are deterministic code. The AI can only make limits *stricter*, never looser.
-4. **The LLM can never hang the demo.** Gemini calls are cached by input, have timeouts, retries and a fallback model. If anything fails, a deterministic fallback answer is used.
+4. **The LLM can never hang the demo.** Mistral calls are cached by input, have timeouts, retries and a fallback model. If anything fails, a deterministic fallback answer is used.
 5. **We measure like a customer.** Our own load generator and probes are the ground truth, not n8n's internal health checks (which stay green during some failures; that is one of our findings).
 6. **Agent 2 is blind and advisory.** It never sees what was injected and it never changes the system. Engineers apply fixes.
 7. **Host access via NodePorts, not `kubectl port-forward`.** A port-forward is tied to one pod and dies when that pod is killed, which would break our measurements.
-8. **LLM = Gemini API** (`gemini-3.8-flash`, fallback `gemini-3.5-flash-lite`) via the `google-genai` SDK. Orchestration with **LangGraph**.
+8. **LLM = Mistral API** (`ministral-14b-latest`, fallback `ministral-8b-latest`), called over HTTPS with `httpx` using strict JSON-schema structured output. Orchestration with **LangGraph**. (Switched from Gemini on 2026-10-10 after its free-tier quota ran out.)
 
 ---
 
@@ -98,7 +98,7 @@ Everything runs in **our own local Kubernetes cluster** on one laptop. We never 
 
 ```
                  ┌──────────────────────── chaosctl (Python, runs on the laptop) ─────────────────────────┐
-                 │  dependency graph ─► AGENT 1 (score ► Gemini picks ► validate ► safety guard)            │
+                 │  dependency graph ─► AGENT 1 (score ► Mistral picks ► validate ► safety guard)           │
                  │       ─► wait for in-flight orders ─► inject (Chaos Mesh) ─► observe ─► recover          │
                  │       ─► fate table + evidence ─► AGENT 2 (blind diagnosis, recommends fixes)            │
                  │  safety controller (own thread, 1×/s)  ·  kill switch  ·  journal  ·  dashboard + chat   │
@@ -111,7 +111,7 @@ Everything runs in **our own local Kubernetes cluster** on one laptop. We never 
    │  ns n8n-chaos  : n8n-main ─► redis ─► n8n-worker (×2) ─► mock-api                                     │
    │                      └──────────────► postgres ◄─────────┘                                            │
    └───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-   Gemini API (internet): receives only graph summaries, plan metadata, evidence summaries. No secrets.
+   Mistral API (internet): receives only graph summaries, plan metadata, evidence summaries. No secrets.
 ```
 
 ## 2.2 The app we break
@@ -146,7 +146,7 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
 2. **Agent 1 plans.**
    - (a) Python scores every allowed experiment in `catalog.yaml`:
      `score = 0.4×criticality + 0.3×untested + 0.2×new-info − 0.1×risk-tier`.
-   - (b) Gemini picks, with a reason that cites graph IDs and a hypothesis.
+   - (b) Mistral picks, with a reason that cites graph IDs and a hypothesis.
    - (c) A validator rejects anything not in the catalog or citing unknown IDs. On rejection, a deterministic plan is used.
    - (d) The **policy guard** computes the blast radius, sets abort limits (stricter only), and enforces the risk-tier
      rule: **a tier-3 experiment (Redis) only after a tier-1 experiment (worker) has passed.**
@@ -184,7 +184,7 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
 11. **History** updated (`state/history.json`). This decides "untested" scores and the tier rule next time.
 12. **Agent 2** (`chaosctl diagnose`) reads the evidence:
     - deterministic detectors
-    - Gemini's step-by-step reasoning (observe → hypothesize → check → conclude)
+    - Mistral's step-by-step reasoning (observe → hypothesize → check → conclude)
     - root cause
     - fixes from `playbook.yaml` only
 
@@ -225,8 +225,8 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
 8. **Agent 2 panel**: its reasoning steps, root cause and recommended fixes.
 9. **"Ask Agent 2" chat** (RAG):
    - (a) Searches ~80 small records: run results, diagnoses, Kubernetes events, log lines, the fix playbook and `docs/` (FACTS, PROGRESS, JUDGES_GUIDE), using BM25 keyword search.
-   - (b) Gemini answers only from those records and must cite them.
-   - (c) If Gemini is down, the chat shows the matching records instead.
+   - (b) Mistral answers only from those records and must cite them.
+   - (c) If Mistral is down, the chat shows the matching records instead.
 
    The chat is **not** blind (it can see results) and is advisory only.
 
@@ -253,21 +253,21 @@ The dashboard keeps the last 5 minutes of chart points in memory.
   - With less, the cluster will be killed. This happened to us once at 3.8 GB.
 - Docker, `kind` (we used v0.33.0), `kubectl`, `helm` (v4.3.0; v3.12+ also works), and [`uv`](https://docs.astral.sh/uv/).
   On a Mac: `brew install kind helm uv`.
-- A **Gemini API key** from Google AI Studio. Optional: without it, every AI step uses its deterministic fallback.
+- A **Mistral API key** from https://console.mistral.ai (API Keys). Optional: without it, every AI step uses its deterministic fallback.
 - Internet access for image downloads. The first setup takes **~25 minutes**, mostly image pulls.
 
 ## 3.2 First-time setup
 
 ```bash
 git clone https://github.com/fall-of-aeon/chaosctl.git && cd chaosctl
-cp .env.example .env                 # put your GEMINI_API_KEY in .env (never commit .env)
+cp .env.example .env                 # put your MISTRAL_API_KEY in .env (never commit .env)
 uv sync                              # Python environment + dependencies
-uv run pytest                        # 57 unit tests, no cluster needed: all should pass
+uv run pytest                        # 59 unit tests, no cluster needed: all should pass
 ```
 
-Optionally, check that Gemini works:
+Optionally, check that Mistral works:
 ```bash
-PYTHONPATH=. uv run python scripts/gemini_smoke.py
+PYTHONPATH=. uv run python scripts/llm_smoke.py
 ```
 
 ## 3.3 Create the cluster and the app
@@ -318,10 +318,10 @@ uv run chaosctl killswitch-test         # kill switch acceptance test, 3× each 
   Fix with `kubectl -n n8n-chaos rollout restart deploy/n8n-worker`.
 - `chaosctl up` resets the worker count to 1 (Helm values). Re-apply step 5 afterwards.
 - `kubectl` must point at `kind-chaos` (`kubectl config use-context kind-chaos`), or the harness refuses to run.
-- **Gemini free-tier quota runs out** after a day of testing (HTTP 429). Then Agent 1, Agent 2 and the chat silently use
-  their deterministic fallbacks (the dashboard labels them "deterministic fallback"). The "answered by" / source label
-  tells you which one you got. Before a demo, check the quota in Google AI Studio. It resets at midnight Pacific; or put a
-  key from another Google Cloud project in `.env`. Identical questions are answered from the cache (`state/llm_cache.sqlite`)
+- **Mistral rate limits** (HTTP 429) on the free "Experiment" plan. Calls are retried with back-off, then the fallback
+  model is tried; if both fail, Agent 1, Agent 2 and the chat silently use their deterministic fallbacks (the dashboard
+  labels them "deterministic fallback"). The "answered by" / source label tells you which one you got. Before a demo,
+  check limits and usage at console.mistral.ai. Identical questions are answered from the cache (`state/llm_cache.sqlite`)
   without using quota.
 
 ## 3.6 Repository layout
@@ -334,19 +334,19 @@ chaosctl/                  the Python package (the "harness")
   catalog.yaml             the ONLY faults that may be injected (templates, tiers, enabled flags)
   policy.yaml              safety limits, tier rules, warm-up, in-flight gate
   playbook.yaml            the ONLY fixes Agent 2 may recommend (with source, verify, rollback)
-  agents/injection.py      Agent 1: scorer, Gemini select, validator, policy guard (LangGraph)
+  agents/injection.py      Agent 1: scorer, Mistral select, validator, policy guard (LangGraph)
   agents/campaign.py       campaign graph: plan → execute → update history → loop (LangGraph)
-  agents/diagnosis.py      Agent 2: blind filter, detectors, Gemini reasoning, playbook validator, grading
+  agents/diagnosis.py      Agent 2: blind filter, detectors, Mistral reasoning, playbook validator, grading
   chaos/chaosmesh.py       creates/deletes/pauses Chaos Mesh resources from catalog templates only
   runner.py                one experiment end to end (pre-flight, warm-up, gate, inject, observe, recover, fates)
   safety.py                state machine, 1 Hz abort monitor, kill switch, recovery watchdog, LOCKED
   loadgen.py               load generator (2 orders/s) + SQLite request log + in-flight queries
   probes.py                Redis/Postgres/Kubernetes probes + fate classification
-  llm.py                   Gemini wrapper: cache, retries, fallback model, budget, secret redaction
+  llm.py                   Mistral wrapper: cache, retries, fallback model, budget, secret redaction
   rag.py                   "Ask Agent 2" chat: corpus, BM25 retrieval, cited answers
   dashboard.py / .html     live dashboard server and page
   journal.py, kube.py      audit journal; Kubernetes client pinned to kind-chaos
-scripts/                   cluster-up/down, up/down, bootstrap, kind-config, gemini_smoke
+scripts/                   cluster-up/down, up/down, bootstrap, kind-config, llm_smoke
 k8s/                       namespace, postgres, redis (+ hardened: AOF + PVC), mock-api, n8n NodePort
 helm-values/               n8n baseline, kube-prometheus-stack (trimmed), chaos-mesh (containerd)
 mock_api/                  FastAPI mock downstream (delay/error rate settable via POST /admin)
@@ -378,6 +378,7 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 | 9 | **Dashboard** | Live charts, markers, fate table, then step bar, system map and Agent 1 menu. |
 | 10 | **Agent 2** | Blind diagnosis with visible reasoning; **4 of 4 root causes correct**. Fixes advisory only. A blindness leak (Chaos Mesh events were visible to it) was found and fixed; the one diagnosis made before the fix was re-run blind. |
 | 11 | **RAG chat** | "Ask Agent 2" on the dashboard with cited answers. |
+| 12 | **LLM switched to Mistral** | Gemini's free-tier quota was exhausted (429s, 504s on the fallback). `llm.py` now calls the Mistral chat completions API with strict JSON-schema output; everything else is unchanged. |
 | 12 | **Cleanup** | Removed unused heartbeat workflow and redundant validate step; ranking tie-break; one-command `demo`. |
 
 ## 4.2 Experiment results (real runs, 10 Oct 2026)
@@ -415,9 +416,8 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 - Run history in `state/history.json`: E1 passed twice, E2 tested once. Both experiments are now "tested", so the
   scorer ranks the worker kill first. The guard still orders tier 1 before tier 3. **To make Agent 1's choice interesting
   again, enable more faults (Part 5).**
-- **Gemini quota is exhausted** (429 `RESOURCE_EXHAUSTED` on `gemini-3.8-flash`, 504 timeouts on the fallback model) as of
-  the last session. Everything still works through the deterministic fallbacks, but the AI panels then show the fallback
-  text, and the retries make an Agent 2 call take ~90 s. See the gotcha in 3.5.
+- **LLM is now Mistral** (`ministral-14b-latest`, fallback `ministral-8b-latest`). Gemini was dropped after its quota
+  ran out. If Mistral is unreachable, everything still works through the deterministic fallbacks. See the gotcha in 3.5.
 
 ---
 
@@ -428,12 +428,12 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 | **Must** | **2+ more failure types** (we only have "pod crash") | E3 `load_spike` (our load generator at 2-3×); E4 `net_delay` on mock-api (Chaos Mesh NetworkChaos) and/or mock-api errors (`POST /admin` on mock-api). Add them to `catalog.yaml` as `enabled: true`; Agent 1's menu then has real choices |
 | **Must** | **Findings report** (`chaosctl report` → `reports/<run>/findings.md`) | Command does not exist yet. Content: environment, experiments with reason, hypothesis vs observed, ranked weaknesses, fixes from Agent 2, resilience score |
 | **Must** | **Resilience score** (deterministic) | Weights: availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 % |
-| **Must** | Architecture one-pager, demo video (≤ 3 min), team form | The team form lists Gemini (model names), LangGraph, Chaos Mesh, Prometheus, Grafana, Kind, n8n; data = synthetic only |
+| **Must** | Architecture one-pager, demo video (≤ 3 min), team form | The team form lists Mistral (model names), LangGraph, Chaos Mesh, Prometheus, Grafana, Kind, n8n; data = synthetic only |
 | **Must** | **Clean run from scratch** on a fresh clone, following only this README | `kind delete cluster --name chaos` first |
 | Should | Re-run E2 after the Redis fix (`k8s/redis-hardened.yaml`) to show before/after | Stretch goal "re-run after a fix" |
 | Should | Detectability: alert rules (PrometheusRule) and when they fired | Needs Prometheus back on (CPU cost) |
-| **Must** | Gemini quota for demo day (see 3.5) | Fresh key/project, or pre-run the demo once so answers are cached |
-| Open question | Organizers: is a hosted LLM (Gemini) OK, or must the model be open source? (gate G7) | `llm.py` is one function; an Ollama provider is a small add |
+| **Must** | Mistral rate limits for demo day (see 3.5) | Check usage in console.mistral.ai, or pre-run the demo once so answers are cached |
+| Open question | Organizers: is a hosted LLM (Mistral API) OK, or must the model be open source? (gate G7) | Mistral's open-weight models (e.g. Mistral Small) can be self-hosted; `llm.py` is one function |
 | Nice | Combined failures; Grafana dashboard; SQLite checkpointer for LangGraph resume | |
 
 Rules while working (from the original plan):
@@ -448,7 +448,7 @@ Rules while working (from the original plan):
 # Part 6: Reference
 
 ## Configuration
-- `.env`: `GEMINI_API_KEY`, `GEMINI_MODEL` (gemini-3.8-flash), `GEMINI_FALLBACK_MODEL` (gemini-3.5-flash-lite),
+- `.env`: `MISTRAL_API_KEY`, `MISTRAL_MODEL` (ministral-14b-latest), `MISTRAL_FALLBACK_MODEL` (ministral-8b-latest),
   `CHAOSCTL_LLM_BUDGET` (30 calls per campaign), `CHAOSCTL_KUBE_CONTEXT` (kind-chaos).
 - `chaosctl/policy.yaml`:
   - abort limits: W1 error rate 50 %, p95 20 s, queue 500
@@ -469,7 +469,7 @@ Rules while working (from the original plan):
 | Postgres | 17.6 |
 | Python | 3.14 |
 | langgraph | 1.2.14 |
-| google-genai | 2.29.0 |
+| LLM | Mistral API (`ministral-14b-latest` / `ministral-8b-latest`) |
 
 ## Third-party components and licenses
 
@@ -480,10 +480,10 @@ Rules while working (from the original plan):
 | kube-prometheus-stack (Prometheus, Grafana) | Apache-2.0 (Grafana: AGPL-3.0) |
 | Kind | Apache-2.0 |
 | LangGraph | MIT |
-| google-genai SDK | Apache-2.0 |
+| Mistral API | hosted service, Mistral AI terms of use |
 | Redis 7.4 | RSALv2 / SSPLv1 dual license |
 | PostgreSQL | PostgreSQL License |
 | FastAPI, pydantic, typer, httpx, rich | MIT / BSD |
 
-**Data used:** synthetic orders generated by our load generator only. Sent to Gemini: graph summaries, plan metadata
+**Data used:** synthetic orders generated by our load generator only. Sent to Mistral: graph summaries, plan metadata
 and evidence summaries (secrets redacted). No personal or real business data.

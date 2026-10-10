@@ -20,3 +20,5 @@
 | n8n worker probes | readiness and liveness are `exec: pgrep -f 'n8n worker'` (process only, not Redis connectivity) | chart values | 2026-10-10 |
 | Chart still sets `QUEUE_WORKER_MAX_STALLED_COUNT` | yes (value 1), although docs say removed in n8n 2.0 | `helm template` | 2026-10-10 |
 | Bull active-list key | PENDING (T1b) | | |
+| Mistral structured output | `POST https://api.mistral.ai/v1/chat/completions` with `response_format: {type: json_schema, json_schema: {name, schema, strict: true}}`; strict mode needs `additionalProperties: false` on every object (as the official SDK does) | mistralai 3.2.0 SDK source + live calls | 2026-10-10 |
+| Mistral model access (team key) | 0 req/min on mistral-small/medium-latest and magistral-*; ministral-14b-latest 30 req/min, ministral-8b-latest 188 req/min, ministral-3b-latest 750 req/min (`x-ratelimit-limit-req-minute` header) | live calls | 2026-10-10 |

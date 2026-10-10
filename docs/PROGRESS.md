@@ -7,8 +7,8 @@
 | G2 K8s go/no-go | OPEN: clock starts at T1a. Team chose the full Kind plan despite 8 GB host RAM (see G3). |
 | G3 Resources | Host: macOS 15.7.1, Apple Silicon (arm64), **8 GB RAM total**; Docker Desktop 28.1.1 with 8 CPUs and **3.8 GB memory** at start. Below the 8-12 GB the plan assumes. Decision (2026-10-10): proceed with full Kind plan; raise Docker Desktop memory; trim monitoring (no Alertmanager, short retention). Watch for OOM kills; Compose fallback remains the escape hatch. |
 | G5 n8n version | OPEN (T1b). |
-| G7 Hosted LLM OK? | OPEN: ask organizers whether Gemini (hosted) is acceptable vs "open-source model". |
-| G8 Gemini quota | OPEN: needs API key; check RPM/RPD in AI Studio. |
+| G7 Hosted LLM OK? | OPEN: ask organizers whether a hosted LLM (now Mistral API) is acceptable vs "open-source model". |
+| G8 LLM quota | Gemini quota exhausted on 2026-10-10; switched to Mistral (see below). Check limits at console.mistral.ai. |
 
 ## Phase 0 (2026-10-10)
 - Tools: kubectl v1.32.2 (client), kind v0.33.0 and Helm v4.3.0 installed via Homebrew (plan said Helm >= 3.12; Helm 4 used), uv 0.12.9.
@@ -84,3 +84,15 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   429 RESOURCE_EXHAUSTED (quota) and the fallback model 504. Blind diagnoses: 4 of 4 correct.
 - README rewritten as onboarding guide and audited against the code; DEMO.md and JUDGES_GUIDE.md updated
   (no Grafana, no `chaosctl report` yet). Repo moved to github.com/fall-of-aeon/chaosctl.
+
+## LLM switched from Gemini to Mistral (2026-10-10)
+- Gemini free-tier quota exhausted (429 / 504). `llm.py` now calls the Mistral chat completions API (`httpx`, strict
+  `json_schema` response format, temperature 0.1, `random_seed` 7); `google-genai` removed. Cache, retries, fallback
+  model, budget and deterministic fallbacks unchanged.
+- The key's plan allows 0 req/min on mistral-small/medium/magistral, so the models are `ministral-14b-latest`
+  (30 req/min) with fallback `ministral-8b-latest` (188 req/min).
+- Agent 2's prompt now lists the allowed evidence ids: the first Mistral diagnosis cited free text and was rejected by
+  the validator.
+- Live check (offline graph + synthetic E1/E2 evidence): structured output on both models; Agent 1 plan from the LLM
+  (3.5 s); Agent 2 blind diagnosis from the LLM, root cause correct for E1 (11 s) and E2 (10 s); RAG chat and dashboard
+  `/api/chat` answer with citations. 59 unit tests pass. Not yet re-run against the live cluster.

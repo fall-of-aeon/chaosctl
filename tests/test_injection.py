@@ -16,8 +16,8 @@ POLICY = yaml.safe_load(open("chaosctl/policy.yaml"))
 def iso(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "STATE_DIR", tmp_path)
     monkeypatch.setattr(llm, "budget", llm._Budget())
-    monkeypatch.setenv("GEMINI_MODEL", "m")
-    monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
+    monkeypatch.setenv("MISTRAL_MODEL", "m")
+    monkeypatch.delenv("MISTRAL_FALLBACK_MODEL", raising=False)
 
 
 def run(use_llm=True, call=None, history=None):
