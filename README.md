@@ -262,7 +262,7 @@ The dashboard keeps the last 5 minutes of chart points in memory.
 git clone https://github.com/fall-of-aeon/chaosctl.git && cd chaosctl
 cp .env.example .env                 # put your MISTRAL_API_KEY in .env (never commit .env)
 uv sync                              # Python environment + dependencies
-uv run pytest                        # 59 unit tests, no cluster needed: all should pass
+uv run pytest                        # 80 unit tests, no cluster needed: all should pass
 ```
 
 Optionally, check that Mistral works:
@@ -298,6 +298,8 @@ uv run chaosctl demo --queue-abort 20   # same, with a strict queue limit to sho
 uv run chaosctl run --exp E1            # E1 = worker pod kill
 uv run chaosctl run --exp E2            # E2 = Redis pod kill (only allowed after a passed E1)
 uv run chaosctl diagnose                # Agent 2 on the newest run (or: --run r1010-163829)
+uv run chaosctl report                  # AI-written findings report + score (newest run; --run ID, --all)
+uv run chaosctl kb                      # fault knowledge base: E1/E2/... and consistency check
 uv run chaosctl kill                    # KILL SWITCH (or: touch KILL, or Ctrl-C in the run)
 uv run chaosctl recover --ack           # clean up after a crash; clears LOCKED
 uv run chaosctl killswitch-test         # kill switch acceptance test, 3× each way (about 10 min)
@@ -332,6 +334,8 @@ chaosctl/                  the Python package (the "harness")
   graph.py                 dependency graph: k8s discovery + overlay + blast radius, SPOF, criticality, Mermaid
   overlay.yaml             declared dependencies and workflow paths (what manifests can't show)
   catalog.yaml             the ONLY faults that may be injected (templates, tiers, enabled flags)
+  knowledge/<fault>.yaml   what each fault means: hypothesis, expected symptoms, signature, fixes (docs/KNOWLEDGE_BASE.md)
+  fault_kb.py              loads + checks the knowledge base; the only way agents/report/score see faults
   policy.yaml              safety limits, tier rules, warm-up, in-flight gate
   playbook.yaml            the ONLY fixes Agent 2 may recommend (with source, verify, rollback)
   agents/injection.py      Agent 1: scorer, Mistral select, validator, policy guard (LangGraph)
@@ -344,6 +348,9 @@ chaosctl/                  the Python package (the "harness")
   probes.py                Redis/Postgres/Kubernetes probes + fate classification
   llm.py                   Mistral wrapper: cache, retries, fallback model, budget, secret redaction
   rag.py                   "Ask Agent 2" chat: corpus, BM25 retrieval, cited answers
+  report.py                `chaosctl report`: findings.md/.json (AI-written; deterministic draft if Mistral is down)
+  agents/reporter.py       Agent 2 report mode: writes + scores the report; validators and number fact-check
+  score.py, scoring.yaml   score weights/rubric; formula cross-check used for the draft
   dashboard.py / .html     live dashboard server and page
   journal.py, kube.py      audit journal; Kubernetes client pinned to kind-chaos
 scripts/                   cluster-up/down, up/down, bootstrap, kind-config, llm_smoke
@@ -425,9 +432,9 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 
 | Priority | Task | Notes |
 |---|---|---|
-| **Must** | **2+ more failure types** (we only have "pod crash") | E3 `load_spike` (our load generator at 2-3×); E4 `net_delay` on mock-api (Chaos Mesh NetworkChaos) and/or mock-api errors (`POST /admin` on mock-api). Add them to `catalog.yaml` as `enabled: true`; Agent 1's menu then has real choices |
-| **Must** | **Findings report** (`chaosctl report` → `reports/<run>/findings.md`) | Command does not exist yet. Content: environment, experiments with reason, hypothesis vs observed, ranked weaknesses, fixes from Agent 2, resilience score |
-| **Must** | **Resilience score** (deterministic) | Weights: availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 % |
+| **Must** | **2+ more failure types** (we only have "pod crash") | E3 `load_spike` (our load generator at 2-3×); E4 `net_delay` on mock-api (Chaos Mesh NetworkChaos) and/or mock-api errors (`POST /admin` on mock-api). Add each to `catalog.yaml` **and** `chaosctl/knowledge/<fault>.yaml` (see docs/KNOWLEDGE_BASE.md), then `chaosctl kb`. A load spike also needs a non-Chaos-Mesh executor in `runner.py` |
+| Done (needs a real run) | **AI-written findings report** (`chaosctl report` → `reports/<run>/findings.md` + `.json`) | Agent 2 writes it, validated and fact-checked; tested live with Mistral on synthetic runs (3/3 AI-written), not yet on real cluster evidence. See docs/KNOWLEDGE_BASE.md |
+| Done (needs a real run) | **Resilience score** (Agent 2, rubric-based) | Weights availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 %; formula cross-check in `chaosctl/score.py`. See docs/KNOWLEDGE_BASE.md |
 | **Must** | Architecture one-pager, demo video (≤ 3 min), team form | The team form lists Mistral (model names), LangGraph, Chaos Mesh, Prometheus, Grafana, Kind, n8n; data = synthetic only |
 | **Must** | **Clean run from scratch** on a fresh clone, following only this README | `kind delete cluster --name chaos` first |
 | Should | Re-run E2 after the Redis fix (`k8s/redis-hardened.yaml`) to show before/after | Stretch goal "re-run after a fix" |

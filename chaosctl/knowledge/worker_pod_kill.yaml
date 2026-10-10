@@ -1,0 +1,18 @@
+# Knowledge for catalog fault worker_pod_kill (format: docs/KNOWLEDGE_BASE.md)
+fault: worker_pod_kill
+alias: E1
+title: Worker pod kill
+category: compute_loss
+summary: Delete one n8n-worker pod with no graceful shutdown while executions are running.
+hypothesis: >-
+  in-flight W1 requests fail or hang while W2 keeps returning 200 and the wait queue grows;
+  stalled jobs may be re-run after lock expiry, creating duplicates
+symptoms:
+  expected: [consumers_down, latency_degradation]
+  possible: [silent_async_failure, backlog_not_drained, lost_work, duplicates, phantom_success, detectability_gap]
+signature:
+  any_of: [consumers_down]
+  root_cause: "The queue consumer (worker) stopped: jobs piled up in Redis with nothing processing them."
+  priority: 10
+grading_keywords: [worker, consumer]
+related_fixes: [scale_workers, graceful_shutdown, queue_depth_alert, pod_disruption_budget, idempotency_keys]

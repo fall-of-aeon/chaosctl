@@ -1,0 +1,13 @@
+# Knowledge for catalog fault pod_failure (format: docs/KNOWLEDGE_BASE.md)
+# Reversible; used today only by the kill-switch test.
+fault: pod_failure
+title: Pod failure (reversible)
+category: compute_loss
+summary: Chaos Mesh swaps the target container for a pause image for a fixed duration, then restores it.
+hypothesis: >-
+  the target stops doing work for the fault duration; pods without a readiness probe stay Ready,
+  so health checks may not show it
+symptoms:
+  expected: []
+  possible: [consumers_down, latency_degradation, detectability_gap]
+related_fixes: [worker_health_probe, queue_depth_alert]

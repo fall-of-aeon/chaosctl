@@ -89,7 +89,7 @@ def _strict(node):
     return node
 
 
-def _call_mistral(model: str, prompt: str, schema: dict) -> str:
+def _call_mistral(model: str, prompt: str, schema: dict, timeout_s: float = TIMEOUT_S) -> str:
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -101,7 +101,7 @@ def _call_mistral(model: str, prompt: str, schema: dict) -> str:
                             "strict": True},
         },
     }
-    resp = httpx.post(MISTRAL_URL, json=body, timeout=TIMEOUT_S,
+    resp = httpx.post(MISTRAL_URL, json=body, timeout=timeout_s,
                       headers={"Authorization": f"Bearer {os.environ['MISTRAL_API_KEY']}"})
     if resp.status_code != 200:
         raise MistralHTTPError(resp.status_code, resp.text)
@@ -121,15 +121,17 @@ def generate_json(
     model_cls: type[T],
     journal: Callable[[dict], None] | None = None,
     call: Callable[[str, str, dict], str] | None = None,
+    timeout_s: float = TIMEOUT_S,
 ) -> T:
     """Return a validated model_cls instance or raise LLMUnavailable."""
-    call = call or _call_mistral
+    real = call is None
+    call = call or (lambda m, p, s: _call_mistral(m, p, s, timeout_s))
     prompt = redact(prompt)
     schema = model_cls.model_json_schema()
     models = [m for m in (os.environ.get("MISTRAL_MODEL"), os.environ.get("MISTRAL_FALLBACK_MODEL")) if m]
     log = journal or (lambda _e: None)
 
-    if not os.environ.get("MISTRAL_API_KEY") and call is _call_mistral:
+    if not os.environ.get("MISTRAL_API_KEY") and real:
         log({"event": "llm", "purpose": purpose, "result": "no_api_key"})
         raise LLMUnavailable("MISTRAL_API_KEY not set")
 

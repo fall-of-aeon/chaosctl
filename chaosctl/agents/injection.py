@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from chaosctl import llm
+from chaosctl.fault_kb import load_kb
 from chaosctl.graph import Graph, node_id
 from chaosctl.journal import Journal, NullJournal
 from chaosctl.safety import Thresholds
@@ -72,14 +73,6 @@ def score_candidates(graph: Graph, catalog: dict, history: list[dict]) -> list[d
 
 # ------------------------------------------------------------ fallback
 
-HYPOTHESES = {
-    "worker_pod_kill": "in-flight W1 requests fail or hang while W2 keeps returning 200 and the wait queue grows; "
-                       "stalled jobs may be re-run after lock expiry, creating duplicates",
-    "redis_pod_kill": "queued and active jobs are lost because redis has no persistence; n8n may restart "
-                      "if the outage exceeds the 10 s redis timeout",
-}
-
-
 def templated_plan(graph: Graph, scored: list[dict]) -> LLMPlan:
     items = []
     seen = set()
@@ -98,7 +91,8 @@ def templated_plan(graph: Graph, scored: list[dict]) -> LLMPlan:
         items.append(PlanItem(
             id=f"exp-{len(items) + 1:02d}", fault=c["fault"], target=c["target"], rung=c["rung"],
             start_when="in_flight>=3", cooldown_s=60, reason=reason, cites=[c["target"], *deps],
-            hypothesis=HYPOTHESES.get(c["fault"], f"{name} failure degrades {list(graph.workflows_affected(name))}")))
+            hypothesis=load_kb().get(c["fault"]).hypothesis
+            or f"{name} failure degrades {list(graph.workflows_affected(name))}"))
     return LLMPlan(experiments=items)
 
 
@@ -215,6 +209,8 @@ def runtime_guard(item: PlanItem, verdict: GuardVerdict, graph: Graph, catalog: 
 def build_prompt(graph: Graph, scored: list[dict], history: list[dict], policy: dict, feedback: str | None) -> str:
     cands = [{k: c[k] for k in ("target", "fault", "rung", "tier", "score")} for c in scored]
     hist = [{k: h.get(k) for k in ("exp_id", "node", "fault", "status", "passed")} for h in history]
+    kb = load_kb()
+    faults = {f: kb.get(f).summary or kb.get(f).title for f in sorted({c["fault"] for c in scored})}
     return f"""You are the injection planner of a chaos-engineering harness for an n8n queue-mode app on Kubernetes.
 Choose which experiments to run, in what order, and explain why. You do not run anything.
 
@@ -223,6 +219,9 @@ DEPENDENCY GRAPH (edges: A depends on B; blast radius of X = nodes that can reac
 
 ENABLED CANDIDATES (only these (target, fault, rung) triples are allowed; score is a deterministic prior):
 {json.dumps(cands, indent=1)}
+
+WHAT EACH FAULT DOES:
+{json.dumps(faults, indent=1)}
 
 RUN HISTORY:
 {json.dumps(hist) if hist else "none"}
