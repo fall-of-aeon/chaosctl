@@ -256,7 +256,7 @@ The dashboard keeps the last 5 minutes of chart points in memory.
 ## 3.2 First-time setup
 
 ```bash
-git clone https://github.com/fall-of-aeon/chaos-n8n.git && cd chaos-n8n
+git clone https://github.com/fall-of-aeon/chaosctl.git && cd chaosctl
 cp .env.example .env                 # put your GEMINI_API_KEY in .env (never commit .env)
 uv sync                              # Python environment + dependencies
 uv run pytest                        # 57 unit tests, no cluster needed: all should pass
