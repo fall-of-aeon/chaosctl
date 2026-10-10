@@ -556,7 +556,7 @@ function renderResil() {
   const ai = r.source === "llm";
   const exps = r.ranking.experiments, comps = r.ranking.components;
   $("resil-card").innerHTML = `<h2 style="font-size:14px;margin:0 0 8px">Resilience score and ranking
-      <span class="h-tag">${ai ? "scored by Agent 2 · " + esc((r.models || []).join(", ") || "Mistral") : "deterministic draft"}</span></h2>
+      <span class="h-tag">${ai ? `AI score: Agent 2 (${esc((r.models || []).join(", ") || "Mistral")}), median of 3 judgements, calibrated on ${(r.calibrated_on || []).length} earlier run${(r.calibrated_on || []).length === 1 ? "" : "s"}` : "deterministic draft (formula)"}</span></h2>
     <div class="resil">
       <div class="kpi"><div class="label">Overall resilience</div>
         <div class="value" style="font-variant-numeric:normal">${esc(r.overall.score)}<span style="font-size:16px;color:var(--text-muted);font-weight:600"> / 100</span></div>
@@ -571,7 +571,7 @@ function renderResil() {
         barRow(i, "comp", c.component.replaceAll("_", " "), `weight ${Math.round(c.weight * 100)}% · ${c.n} scored`, c.mean,
                `${c.component.replaceAll("_", " ")}: mean ${c.mean ?? "n/a"} of 100`)).join("")}</div></div>
     </div>
-    <div style="color:var(--text-muted);font-size:12px;margin-top:8px">Score 0-100 per experiment = weighted mean of availability 30%, self-recovery 25%, latency 20%, data integrity 15%, detectability 10%. Full analysis in the findings report.</div>`;
+    <div style="color:var(--text-muted);font-size:12px;margin-top:8px">Agent 2 judges each component 0-100 from the evidence (formula score as a reference); total = weighted mean: availability 30%, self-recovery 25%, latency 20%, data integrity 15%, detectability 10%. Reasons per component in the findings report.</div>`;
   for (const el of $("resil-card").querySelectorAll(".bar-row")) {
     el.onpointermove = (ev) => barTip(el, ev);
     el.onfocus = () => barTip(el, null);

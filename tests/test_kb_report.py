@@ -222,9 +222,14 @@ def test_cli_report_without_runs(tmp_path, monkeypatch):
 def _exp_json(ref="r1010-163348/exp-01", text="11 of 28 orders were lost visibly; recovery took 78.8 s.", **over):
     d = {"exp_ref": ref, "headline": "Worker kill hurt W1.", "why_chosen": "single point of failure",
          "expected_vs_observed": "W1 slowed as predicted; no duplicates.", "impact": text, "recovery": "78.8 s, no help.",
-         "root_cause": "The worker stopped; the blind diagnosis was correct.", "evidence": ["consumers_down", "fates"],
-         "scores": [{"component": c, "score": v, "reason": "measured"} for c, v in
-                    zip(reporter.COMPONENTS, [80, 85, 0, 25, 0])]}
+         "root_cause": "The worker stopped; the blind diagnosis was correct.", "evidence": ["consumers_down", "fates"]}
+    d.update(over)
+    return json.dumps(d)
+
+
+def _score_json(values=(80, 85, 0, 25, 0), ref="r1010-163348/exp-01", **over):
+    d = {"exp_ref": ref, "scores": [{"component": c, "score": v, "reason": "judged from the measured evidence"}
+                                    for c, v in zip(reporter.COMPONENTS, values)]}
     d.update(over)
     return json.dumps(d)
 
@@ -237,17 +242,19 @@ def _summary_json(**over):
                          "evidence": ["detectability_gap"], "seen_in": ["r1010-163348/exp-01"],
                          "fixes": ["queue_depth_alert"]}],
          "fixes": [{"playbook_id": "scale_workers", "priority": 1, "why": "spare consumer", "addresses": ["Lost orders"]}],
-         "overall_score": 49, "limitations": "Only one fault type."}
+         "limitations": "Only one fault type."}
     d.update(over)
     return json.dumps(d)
 
 
-def fake_model(exp_answers, summary_answers):
+def fake_model(exp_answers, summary_answers, score_answers=None):
     seen = []
+    queues = {"ExperimentReport": exp_answers, "FindingsSummary": summary_answers,
+              "ScoreJudgement": score_answers or [_score_json()]}
 
     def call(model, prompt, schema):
         seen.append(schema["title"])
-        queue = exp_answers if schema["title"] == "ExperimentReport" else summary_answers
+        queue = queues[schema["title"]]
         return queue.pop(0) if len(queue) > 1 else queue[0]
     call.seen = seen
     return call
@@ -257,13 +264,15 @@ def test_ai_report_is_written_by_the_model(tmp_path):
     rdir = make_run(tmp_path)
     call = fake_model([_exp_json()], [_summary_json()])
     md, data = report.build(report.load_run(rdir), call=call)
-    assert data["source"] == "llm" and call.seen == ["ExperimentReport", "FindingsSummary"]
-    total = data["experiments"][0]["total"]
-    assert total == round(0.30 * 80 + 0.25 * 85 + 0.20 * 0 + 0.15 * 25 + 0.10 * 0)   # weighted from the AI's scores
-    assert "Written by Agent 2" in md and "Killing the worker lost 11 orders visibly." in md
+    assert data["source"] == "llm"
+    assert call.seen == ["ScoreJudgement"] * reporter.SAMPLES + ["ExperimentReport", "FindingsSummary"]
+    ai = data["experiments"][0]["ai_score"]
+    assert ai["total"] == round(0.30 * 80 + 0.25 * 85 + 0.20 * 0 + 0.15 * 25 + 0.10 * 0, 1)  # the AI's judgement
+    assert data["overall"]["score"] == ai["total"] and data["ranking"]["experiments"][0]["score"] == ai["total"]
+    assert data["experiments"][0]["reference_score"]["total"] == score.score_experiment(
+        e1_bundle(), json.loads((rdir / "results.json").read_text())[0])["total"]        # formula kept as reference
+    assert "Written and scored by Agent 2" in md and "Killing the worker lost 11 orders visibly." in md
     assert "Deterministic draft" not in md and data["unverified_numbers"] == {}
-    assert data["formula_cross_check"]["r1010-163348/exp-01"] == score.score_experiment(
-        e1_bundle(), json.loads((rdir / "results.json").read_text())[0])["total"]
 
 
 def test_invalid_ai_output_is_retried_with_feedback(tmp_path):
@@ -275,7 +284,8 @@ def test_invalid_ai_output_is_retried_with_feedback(tmp_path):
     orig = llm.generate_json
 
     def spy(purpose, prompt, *a, **k):
-        prompts.append(prompt)
+        if purpose != "report_score":
+            prompts.append(prompt)
         return orig(purpose, prompt, *a, **k)
     import chaosctl.agents.reporter as rp
     rp.llm.generate_json, saved = spy, rp.llm.generate_json
@@ -289,7 +299,7 @@ def test_invalid_ai_output_is_retried_with_feedback(tmp_path):
 
 def test_ai_output_still_invalid_after_retry_falls_back(tmp_path):
     rdir = make_run(tmp_path)
-    call = fake_model([_exp_json(scores=[])], [_summary_json()])
+    call = fake_model([_exp_json()], [_summary_json()], [_score_json(scores=[])])
     md, data = report.build(report.load_run(rdir), call=call)
     assert data["source"].startswith("fallback:AI writer unavailable") and "Deterministic draft" in md
 
@@ -316,8 +326,6 @@ def test_summary_rules(tmp_path):
     unordered = reporter.FindingsSummary.model_validate_json(_summary_json(weaknesses=list(reversed(
         json.loads(_summary_json())["weaknesses"]))))
     assert any("most severe first" in e for e in reporter.validate_summary(unordered, [r], fired))
-    high = reporter.FindingsSummary.model_validate_json(_summary_json(overall_score=99))
-    assert any("between the experiment scores" in e for e in reporter.validate_summary(high, [r], fired))
     assert reporter.false_claims("with no silent data loss", facts) == []
     assert reporter.false_claims("orders were lost silently", facts)
 
@@ -369,3 +377,43 @@ def test_dashboard_reads_newest_report(tmp_path, monkeypatch):
     r = dashboard.resilience()
     assert r["path"] == "reports/r1010-163348/findings.json" and r["ranking"]["experiments"][0]["rank"] == 1
     assert r["overall"]["score"] == r["ranking"]["experiments"][0]["score"]
+
+
+# ------------------------------------------------------------ AI score: median of samples, calibration memory
+
+def test_ai_score_is_median_of_independent_judgements(tmp_path):
+    rdir = make_run(tmp_path)
+    samples = [_score_json((90, 90, 10, 30, 0)), _score_json((70, 60, 30, 20, 0)), _score_json((80, 85, 20, 25, 0))]
+    md, data = report.build(report.load_run(rdir), call=fake_model([_exp_json()], [_summary_json()], samples))
+    comps = {k: c["score"] for k, c in data["experiments"][0]["ai_score"]["components"].items()}
+    assert comps == {"availability": 80, "self_recovery": 85, "latency": 20, "data_integrity": 25, "detectability": 0}
+    assert data["experiments"][0]["ai_score"]["spread"] > 0 and "median of 3 judgements" in md
+
+
+def test_scores_are_remembered_and_used_for_calibration(tmp_path, monkeypatch):
+    from chaosctl import score_memory
+    make_run(tmp_path, run_id="r1010-100000")
+    report.build(report.load_run(tmp_path / "reports" / "r1010-100000"), call=fake_model([_exp_json(
+        ref="r1010-100000/exp-01")], [_summary_json(weaknesses=[])], [_score_json(ref="r1010-100000/exp-01")]))
+    mem = score_memory.load()
+    assert [m["exp_ref"] for m in mem] == ["r1010-100000/exp-01"] and mem[0]["ai_total"] is not None
+    prompts = []
+    orig = llm.generate_json
+
+    def spy(purpose, prompt, *a, **k):
+        prompts.append((purpose, prompt))
+        return orig(purpose, prompt, *a, **k)
+    monkeypatch.setattr(reporter.llm, "generate_json", spy)
+    make_run(tmp_path, run_id="r1010-110000")
+    md, data = report.build(report.load_run(tmp_path / "reports" / "r1010-110000"), call=fake_model(
+        [_exp_json(ref="r1010-110000/exp-01")], [_summary_json(weaknesses=[])], [_score_json(ref="r1010-110000/exp-01")]))
+    score_prompt = next(p for purpose, p in prompts if purpose == "report_score")
+    assert "r1010-100000/exp-01" in score_prompt                              # earlier judgement shown as calibration
+    assert data["calibrated_on"] == ["r1010-100000/exp-01"] and "calibrated on 1 earlier" in md
+    assert len(score_memory.load()) == 2
+
+
+def test_deterministic_draft_does_not_touch_score_memory(tmp_path):
+    from chaosctl import score_memory
+    report.build(report.load_run(make_run(tmp_path)), use_llm=False)
+    assert score_memory.load() == []

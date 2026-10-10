@@ -234,6 +234,22 @@ def ranking_md(rk: dict) -> list[str]:
     return md + [""]
 
 
+def score_method_md() -> list[str]:
+    w = SCORE_CONFIG["weights"]
+    return [f"R = {w['availability']:.2f}·A + {w['self_recovery']:.2f}·S + {w['latency']:.2f}·L + "
+            f"{w['data_integrity']:.2f}·D + {w['detectability']:.2f}·M, each 0-100 (weights in `chaosctl/scoring.yaml`, "
+            "formulas in `chaosctl/score.py`).",
+            "- A availability: successful W1 responses / all W1 responses after injection.",
+            "- S self-recovery: 100 if SLIs are back within 30 s, falling to 70 at the recovery deadline; 60 if pods "
+            "recovered but SLIs did not within the window; 40 if the watchdog restarted something; 0 if LOCKED.",
+            "- L latency: 100 if peak W1 p95 ≤ 1.5× baseline, 0 at the abort limit, linear in between.",
+            "- D data integrity: in-flight orders completed exactly once / all in-flight orders.",
+            "- M detectability: 0 if n8n-main stayed Ready through a consumer/queue outage, 100 if health checks "
+            "showed it, n/a if no such outage happened.",
+            "Components without data are n/a and the other weights are rescaled (coverage is shown). The score "
+            "compares experiments on this testbed; it is not a certified reliability measure.", ""]
+
+
 def build_fallback(exps: list[dict], kb: FaultKB | None = None, reason: str | None = None) -> tuple[str, dict]:
     """Deterministic draft, used only when the AI writer is unavailable or disabled."""
     kb = kb or load_kb()
@@ -289,18 +305,7 @@ def build_fallback(exps: list[dict], kb: FaultKB | None = None, reason: str | No
            f"{', '.join(r['addresses']) or '-'} | {r['effort']} / {r['impact']} | `{r['verify']}` |"
            for i, r in enumerate(fixes, 1)]
     w = SCORE_CONFIG["weights"]
-    md += ["", "## 6. How the score is computed", "",
-           f"R = {w['availability']:.2f}·A + {w['self_recovery']:.2f}·S + {w['latency']:.2f}·L + "
-           f"{w['data_integrity']:.2f}·D + {w['detectability']:.2f}·M, each 0-100 (weights in `chaosctl/scoring.yaml`).",
-           "- A availability: successful W1 responses / all W1 responses after injection.",
-           "- S self-recovery: 100 if SLIs are back within 30 s, falling to 70 at the recovery deadline; 60 if pods "
-           "recovered but SLIs did not within the window; 40 if the watchdog restarted something; 0 if LOCKED.",
-           "- L latency: 100 if peak W1 p95 ≤ 1.5× baseline, 0 at the abort limit, linear in between.",
-           "- D data integrity: in-flight orders completed exactly once / all in-flight orders.",
-           "- M detectability: 0 if n8n-main stayed Ready through a consumer/queue outage, 100 if health checks "
-           "showed it, n/a if no such outage happened.",
-           "Components without data are n/a and the other weights are rescaled (coverage is shown). The score "
-           "compares experiments on this testbed; it is not a certified reliability measure.", ""]
+    md += ["", "## 6. How the score is computed", ""] + score_method_md()
     data = {"source": f"fallback:{reason or 'llm_disabled'}", "runs": runs,
             "overall": {"score": overall["mean"], "verdict": overall["band"], "worst": overall["worst"],
                         "experiments": overall["experiments"]} if overall else None,
@@ -321,11 +326,31 @@ def build(exps: list[dict], kb: FaultKB | None = None, use_llm: bool = True, cal
     analysed = [(e, analyse(e, kb)) for e in exps]
     calls: list[dict] = []
     try:
-        ai = reporter.write_report([{**e, "detectors": a["detectors"], "grade": a["grade"]} for e, a in analysed],
-                                   kb, journal=calls.append, call=call)
+        ai = reporter.write_report([{**e, "detectors": a["detectors"], "grade": a["grade"], "score": a["score"]}
+                                    for e, a in analysed], kb, journal=calls.append, call=call)
     except llm.LLMUnavailable as exc:
         return build_fallback(exps, kb, reason=f"AI writer unavailable: {exc}")
-    return render_ai(analysed, ai, calls)
+    md, data = render_ai(analysed, ai, calls)
+    remember(ai, analysed)
+    return md, data
+
+
+def remember(ai: dict, analysed: list[tuple[dict, dict]]) -> None:
+    """Store Agent 2's judgements so later experiments are scored consistently with them (score_memory.py)."""
+    from chaosctl import score_memory
+    facts = {f["exp_ref"]: f for f in ai["facts"]}
+    entries = []
+    for e, a in analysed:
+        ref = f"{e['run_id']}/{e['exp_id']}"
+        sc = ai["scores"].get(ref)
+        if not sc:
+            continue
+        entries.append({"exp_ref": ref, "fault": facts[ref]["fault"]["name"], "target": e["result"].get("target"),
+                        "status": e["result"].get("status"), "key_facts": reporter.plain_facts(facts[ref]),
+                        "reference": {k: c["score"] for k, c in (a["score"].get("components") or {}).items()},
+                        "ai_scores": {k: c["score"] for k, c in sc["components"].items()}, "ai_total": sc["total"]})
+    if entries:
+        score_memory.record(entries)
 
 
 def _section(title: str, text: str) -> list[str]:
@@ -333,33 +358,49 @@ def _section(title: str, text: str) -> list[str]:
 
 
 def render_ai(analysed: list[tuple[dict, dict]], ai: dict, calls: list[dict]) -> tuple[str, dict]:
+    """AI-written report; the resilience score is Agent 2's judgement, the formula score a reference."""
     s: reporter.FindingsSummary = ai["summary"]
     reps = {r.exp_ref: r for r in ai["experiments"]}
+    scores = ai["scores"]
     models = sorted({c["model"] for c in calls if c.get("model") and c.get("source") in ("api", "cache")})
     runs = sorted({e["run_id"] for e, _ in analysed})
+    totals = [v["total"] for v in scores.values() if v["total"] is not None]
+    overall = {"score": round(sum(totals) / len(totals), 1), "verdict": reporter.band(sum(totals) / len(totals)),
+               "worst": min(totals), "experiments": len(totals)} if totals else None
+    calibrated = sorted({r for v in scores.values() for r in v.get("calibrated_on", [])})
+    rk = ranking([{"exp_ref": f"{e['run_id']}/{e['exp_id']}", "title": a["knowledge"].title,
+                   "alias": a["knowledge"].alias, "target": e["result"].get("target"),
+                   "status": e["result"].get("status"),
+                   "score": (scores.get(f"{e['run_id']}/{e['exp_id']}") or {}).get("total"),
+                   "verdict": (scores.get(f"{e['run_id']}/{e['exp_id']}") or {}).get("verdict"),
+                   "components": {k: c["score"] for k, c in
+                                  ((scores.get(f"{e['run_id']}/{e['exp_id']}") or {}).get("components") or {}).items()}}
+                  for e, a in analysed])
     md = [f"# Findings report: {', '.join(runs)}", "",
-          f"_Written by Agent 2 ({', '.join(models) or 'Mistral'}) on {time.strftime('%Y-%m-%d %H:%M')} from the run "
-          "journals and evidence. Every cited id and fix is validated and every number is fact-checked against the "
-          "measurements._", "", "## 1. Executive summary", "", s.executive_summary, "",
-          f"**Resilience score (Agent 2): {s.overall_score} / 100 ({reporter.band(s.overall_score)})**", "",
-          "| Experiment | Fault | Status | Score | Headline |", "|---|---|---|---|---|"]
+          f"_Written and scored by Agent 2 ({', '.join(models) or 'Mistral'}) on {time.strftime('%Y-%m-%d %H:%M')} "
+          "from the run journals and evidence. Every cited id and fix is validated and every number is fact-checked "
+          "against the measurements._", "", "## 1. Executive summary", "", s.executive_summary, ""]
+    if overall:
+        md += [f"**Resilience score (Agent 2): {overall['score']} / 100 ({overall['verdict']})**, mean of "
+               f"{overall['experiments']} scored experiment(s); worst {overall['worst']}. Each experiment's score is the "
+               f"median of {reporter.SAMPLES} independent judgements"
+               + (f", calibrated on {len(calibrated)} earlier experiment(s)." if calibrated else
+                  "; no earlier experiments to calibrate on yet."), ""]
+    md += ["| Experiment | Fault | Status | Score (Agent 2) | Reference (formula) | Headline |",
+           "|---|---|---|---|---|---|"]
     for e, a in analysed:
-        r = reps[f"{e['run_id']}/{e['exp_id']}"]
-        md.append(f"| {r.exp_ref} | {a['knowledge'].alias or ''} {a['knowledge'].title} | "
-                  f"{e['result'].get('status', '?')} | {r.total()} ({r.verdict()}) | {r.headline} |")
-    rk = ranking([{"exp_ref": r.exp_ref, "title": a["knowledge"].title, "alias": a["knowledge"].alias,
-                   "target": e["result"].get("target"), "status": e["result"].get("status"),
-                   "score": r.total(), "verdict": r.verdict(),
-                   "components": {c.component: c.score for c in r.scores}}
-                  for (e, a), r in ((ea, reps[f"{ea[0]['run_id']}/{ea[0]['exp_id']}"]) for ea in analysed)])
+        ref = f"{e['run_id']}/{e['exp_id']}"
+        sc, r = scores.get(ref), reps[ref]
+        md.append(f"| {ref} | {a['knowledge'].alias or ''} {a['knowledge'].title} | {e['result'].get('status', '?')} | "
+                  f"{(str(sc['total']) + ' (' + sc['verdict'] + ')') if sc else 'n/a'} | "
+                  f"{a['score'].get('total', 'n/a') if a['score'].get('scored') else 'n/a'} | {r.headline} |")
     md += [""] + ranking_md(rk)
     md += ["## 2. Environment and baseline", "", s.environment, "", "## 3. Experiments", ""]
-    formula = {}
+    w = SCORE_CONFIG["weights"]
     for e, a in analysed:
-        r = reps[f"{e['run_id']}/{e['exp_id']}"]
-        f = a["score"].get("total") if a["score"].get("scored") else None
-        formula[r.exp_ref] = f
-        md += [f"### {r.exp_ref} · {a['knowledge'].alias + ' · ' if a['knowledge'].alias else ''}"
+        ref = f"{e['run_id']}/{e['exp_id']}"
+        r, sc, form = reps[ref], scores.get(ref), a["score"]
+        md += [f"### {ref} · {a['knowledge'].alias + ' · ' if a['knowledge'].alias else ''}"
                f"{a['knowledge'].title} → {e['result'].get('target', '?')} ({e['result'].get('status', '?')})", "",
                f"_{r.headline}_", ""]
         md += _section("Why Agent 1 chose it", r.why_chosen)
@@ -367,50 +408,63 @@ def render_ai(analysed: list[tuple[dict, dict]], ai: dict, calls: list[dict]) ->
         md += _section("Customer impact", r.impact)
         md += _section("Recovery", r.recovery)
         md += _section("Root cause", r.root_cause)
-        md += [f"Evidence: {', '.join(f'`{x}`' for x in r.evidence)}", "",
-               f"**Resilience score: {r.total()} / 100 ({r.verdict()})**, weighted from Agent 2's component scores", "",
-               "| Component | Weight | Score | Reason |", "|---|---|---|---|"]
-        w = reporter.SCORE_CONFIG["weights"]
-        md += [f"| {c.component.replace('_', ' ')} | {w.get(c.component, 0):.0%} | "
-               f"{'n/a' if c.score is None else c.score} | {c.reason} |" for c in r.scores]
-        if f is not None and r.total() is not None and abs(f - r.total()) > 20:
-            md += ["", f"> Cross-check: the measurement formula in `chaosctl/score.py` gives {f} for this experiment "
-                       f"({abs(f - r.total()):.0f} points from Agent 2's score)."]
+        md += [f"Evidence: {', '.join(f'`{x}`' for x in r.evidence)}", ""]
+        if sc:
+            fc = form.get("components") or {}
+            md += [f"**Resilience score (Agent 2): {sc['total']} / 100 ({sc['verdict']})**, median of {sc['samples']} "
+                   f"judgements (spread {sc['spread']} points)"
+                   + (f"; reference formula {form['total']}" if form.get("scored") else ""), "",
+                   "| Component | Weight | Agent 2 | Why (Agent 2) | Reference | Measured |", "|---|---|---|---|---|---|"]
+            for k, c in sc["components"].items():
+                rc = fc.get(k) or {}
+                md.append(f"| {k.replace('_', ' ')} | {w[k]:.0%} | {_fmt(c['score'])} | {c['reason']} | "
+                          f"{_fmt(rc.get('score'))} | {rc.get('why', '')} |")
+            if form.get("scored") and sc["total"] is not None and abs(form["total"] - sc["total"]) > 20:
+                md += ["", f"> Agent 2's score differs from the reference formula ({form['total']}) by "
+                           f"{abs(form['total'] - sc['total']):.0f} points; its reasons per component are above."]
+        else:
+            md += [f"Not scored: {form.get('why', 'no measurable component')}"]
         tl = e["result"].get("timeline") or {}
-        summary = ((e["result"].get("fates") or e["bundle"].get("fates") or {}).get("summary")) or {}
-        md += ["", "<details><summary>Measurements</summary>", "",
-               "| Seconds after injection | |", "|---|---|"]
+        fates = ((e["result"].get("fates") or e["bundle"].get("fates") or {}).get("summary")) or {}
+        md += ["", "<details><summary>Measurements</summary>", "", "| Seconds after injection | |", "|---|---|"]
         md += [f"| {label} | {_fmt(tl.get(k), ' s')} |" for k, label in TIMELINE]
         md += [""] + (["| In-flight order fate | count |", "|---|---|"]
-                      + [f"| {k.replace('_', ' ')} | {v} |" for k, v in summary.items() if v] if summary else [])
+                      + [f"| {k.replace('_', ' ')} | {v} |" for k, v in fates.items() if v] if fates else [])
         md += ["", "Detectors: " + ("; ".join(f"{h['severity']} `{h['id']}`: {h['detail']}" for h in a["detectors"])
                                     or "none"), "", "</details>", ""]
     md += ["## 4. Weaknesses, ranked by severity", "", "| # | Severity | Weakness | Seen in | Evidence | Fixes |",
            "|---|---|---|---|---|---|"]
-    md += [f"| {i} | {w.severity} | **{w.title}**: {w.explanation} | {', '.join(w.seen_in)} | "
-           f"{', '.join(f'`{x}`' for x in w.evidence)} | {', '.join(f'`{x}`' for x in w.fixes)} |"
-           for i, w in enumerate(s.weaknesses, 1)]
+    md += [f"| {i} | {wk.severity} | **{wk.title}**: {wk.explanation} | {', '.join(wk.seen_in)} | "
+           f"{', '.join(f'`{x}`' for x in wk.evidence)} | {', '.join(f'`{x}`' for x in wk.fixes)} |"
+           for i, wk in enumerate(s.weaknesses, 1)]
     md += ["", "## 5. Recommended fixes (advisory; an engineer applies them)", "",
            "| Priority | Fix | Why | Addresses | Effort / impact | Verify |", "|---|---|---|---|---|---|"]
     for fx in sorted(s.fixes, key=lambda x: x.priority):
         pb = PLAYBOOK[fx.playbook_id]
         md.append(f"| {fx.priority} | {pb['title']} (`{fx.playbook_id}`) | {fx.why} | {', '.join(fx.addresses)} | "
                   f"{pb['effort']} / {pb['impact']} | `{pb['verify']}` |")
-    md += ["", "## 6. Limitations", "", s.limitations, "", "## 7. How this report was produced", "",
-           "Agent 2 wrote and scored each experiment from the recorded facts (timeline, order fates, measurements, "
-           "detectors, Agent 1's plan and its own blind diagnosis), then wrote the summary, weakness ranking and fix "
-           "priorities. Validators rejected unknown ids, fixes outside `playbook.yaml`, malformed scores and "
-           "inconsistent rankings (up to two retries with the errors as feedback); numbers in the text were checked against "
-           "the measurements. The total is the weighted mean of Agent 2's component scores.", "",
-           "Scoring rubric given to Agent 2:", "", "```", reporter.RUBRIC, "```"]
+    md += ["", "## 6. Limitations", "", s.limitations, "", "## 7. How this report and score were produced", "",
+           "Agent 2 wrote each experiment's analysis from the recorded facts (timeline, order fates, measurements, "
+           "detectors, Agent 1's plan and its own blind diagnosis), then the summary, weakness ranking and fix "
+           "priorities. Validators rejected unknown ids, fixes outside `playbook.yaml` and malformed answers (up to two "
+           "retries with the errors as feedback); numbers in the text were checked against the measurements.", "",
+           f"**Resilience score.** Agent 2 judges each component from the evidence. It sees the formula score below as "
+           f"a reference and may depart from it with a reason, and it is calibrated on its earlier judgements of real "
+           f"experiments (`state/score_memory.jsonl`; this report used {len(calibrated)}). It scores every experiment "
+           f"{reporter.SAMPLES} times independently and the median per component is used; the spread shows how much "
+           "the judgements varied. The harness only computes the weighted total. This is a judgement on this testbed, "
+           "not a certified reliability measure.", "", "Rubric given to Agent 2:", "", "```", reporter.RUBRIC, "```", "",
+           "Reference formula:", ""]
+    md += score_method_md()
     if ai["unverified_numbers"]:
-        md += ["", "**Fact-check flags** (numbers not traceable to the measurements, or claims the counts contradict): "
+        md += ["**Fact-check flags** (numbers not traceable to the measurements, or claims the counts contradict): "
                + "; ".join(f"{k}: {', '.join(v)}" for k, v in ai["unverified_numbers"].items())]
-    data = {"source": "llm", "models": models, "runs": runs,
-            "overall": {"score": s.overall_score, "verdict": reporter.band(s.overall_score)}, "ranking": rk,
-            "summary": s.model_dump(),
-            "experiments": [{**r.model_dump(), "total": r.total(), "verdict": r.verdict()} for r in ai["experiments"]],
-            "formula_cross_check": formula, "unverified_numbers": ai["unverified_numbers"], "llm_calls": calls}
+    data = {"source": "llm", "models": models, "runs": runs, "overall": overall, "ranking": rk,
+            "calibrated_on": calibrated, "summary": s.model_dump(),
+            "experiments": [{**reps[f"{e['run_id']}/{e['exp_id']}"].model_dump(),
+                             "ai_score": scores.get(f"{e['run_id']}/{e['exp_id']}"), "reference_score": a["score"]}
+                            for e, a in analysed],
+            "unverified_numbers": ai["unverified_numbers"], "llm_calls": calls}
     return "\n".join(md), data
 
 
