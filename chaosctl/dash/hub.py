@@ -195,7 +195,7 @@ class Hub(threading.Thread):
             last = None
 
         point = {"t": round(t, 2), "load_on": sample["load_on"]}
-        for k in ("w1_ok", "w1_err", "w1_p95", "w2_ok", "w2_err"):
+        for k in ("w1_ok", "w1_err", "w1_p50", "w1_p95", "w2_ok", "w2_err"):
             point[k] = lg.get(k) if lg and lg["load_on"] else None
         point["w1_pending"] = (lg or {}).get("w1_pending") if lg and lg["load_on"] else None
         point["redis_up"] = rd.get("reachable") if rd else None
@@ -203,6 +203,9 @@ class Hub(threading.Thread):
         point["q_active"] = rd.get("active") if rd.get("reachable") else None
         point["dbsize"] = rd.get("dbsize") if rd.get("reachable") else None
         point["recon_gap"] = (pg or {}).get("recon_gap")
+        # per pod: [name, phase, ready, restarts] for the live pod swimlane
+        point["pods"] = {n: [[p.get("name"), p.get("phase"), p.get("ready"), p.get("restarts")] for p in ps]
+                         for n, ps in (pods or {}).items()} if pods is not None else None
 
         active_target = exp["target"] if exp and exp.get("active") and exp.get("t_inject") else None
         wf = model.workflow_strip(graph, {n: s["state"] for n, s in states.items()}, sample, ctx.get("baseline"), active_target)

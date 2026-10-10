@@ -415,15 +415,21 @@ class Run:
 
     # -- peak latency
     def peak_p95(self) -> dict | None:
+        """Highest W1 p95 after injection, from the client-side records (loadgen), else from the safety trace."""
         if not self.t_inject:
             return None
+        b = ((self.evidence.get("baseline") or {}).get("w1") or {}).get("p95_ms")
+        cols = self.series()["cols"]
+        after = [(v, t) for t, v in zip(cols["t"], cols["w1_p95"]) if t >= 0 and v is not None]
+        if after:
+            v, t = max(after)
+            return {"ms": v, "rel_s": t, "ratio": round(v / b, 1) if b else None, "source": "loadgen"}
         s = self.evidence.get("trace") or []
         vals = [((x.get("w1") or {}).get("p95_ms"), x["t"]) for x in s if (x.get("w1") or {}).get("p95_ms")]
         if not vals:
             return None
         v, t = max(vals)
-        b = ((self.evidence.get("baseline") or {}).get("w1") or {}).get("p95_ms")
-        return {"ms": v, "rel_s": t, "ratio": round(v / b, 1) if b else None}
+        return {"ms": v, "rel_s": t, "ratio": round(v / b, 1) if b else None, "source": "trace"}
 
     # -- unified log
     def logs(self) -> list[dict]:

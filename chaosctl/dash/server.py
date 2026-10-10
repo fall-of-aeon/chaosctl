@@ -153,6 +153,8 @@ def make_handler(hub: Hub):
                     return self._json(hub.api_agent1())
                 if u.path.startswith("/api/experiments/"):
                     return self._json(hub.api_experiment(u.path.rsplit("/", 1)[-1], arg("run", None)))
+                if u.path == "/api/download":
+                    return self._download(arg("path", ""))
                 if u.path == "/api/stream":
                     return self._stream()
             except ValueError as exc:
@@ -161,9 +163,23 @@ def make_handler(hub: Hub):
                 return self._json({"error": f"{type(exc).__name__}: {str(exc)[:200]}"}, 500)
             name = "index.html" if u.path in ("/", "") else u.path.lstrip("/")
             f = (STATIC / name).resolve()
-            if f.parent != STATIC.resolve() or not f.exists():
+            if STATIC.resolve() not in f.parents or not f.is_file():
                 return self._send(b"not found", "text/plain", 404)
             self._send(f.read_bytes(), TYPES.get(f.suffix, "application/octet-stream"))
+
+        def _download(self, rel: str):
+            """findings.md / findings.json under reports/ only, as a file download."""
+            from chaosctl.dash.sources import REPORTS
+            f = (REPORTS.parent / rel).resolve()
+            if f.name not in ("findings.md", "findings.json") or REPORTS.resolve() not in f.parents or not f.exists():
+                return self._json({"error": "only reports/**/findings.md or findings.json can be downloaded"}, 404)
+            body = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8" if f.suffix == ".md" else "application/json")
+            self.send_header("Content-Disposition", f'attachment; filename="{f.parent.name}-{f.name}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def _stream(self):
             self.send_response(200)

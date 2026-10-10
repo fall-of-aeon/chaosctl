@@ -654,7 +654,7 @@ def narration(s: dict, diag: dict | None, fix: dict | None, report: dict | None 
     else:
         out["diagnose"] = "Agent 2 has not diagnosed this run yet."
     if fix and fix.get("fixes"):
-        out["fix"] = f"Fix: {fix['fixes'][0].get('action')}."
+        out["fix"] = f"Fix: {str(fix['fixes'][0].get('action') or '').rstrip('. ')}."
     else:
         out["fix"] = "No fix summary yet."
     if report and report.get("available"):

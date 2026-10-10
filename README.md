@@ -268,49 +268,43 @@ cloud and physical-machine chaos.
 
 ## 2.7 The dashboard (`chaosctl dashboard` → http://127.0.0.1:8787)
 
-Read-only: it has no button that injects a fault or triggers the kill switch. `chaosctl dashboard --replay <run-id>`
-plays a recorded run from `reports/<run-id>/` instead (header chip "Replay"); the page code is the same in both modes.
+Read-only and advisory: no button injects, deletes chaos or applies a fix; commands are shown as copyable text.
+Works offline (no CDN; charts are our own SVG). Pick a run in the header: **LIVE** follows the cluster, any finished
+run is **REPLAYED** from `reports/<run-id>/` + `state/loadgen.sqlite` with a scrubber (1x / 4x / 10x), so the demo
+video needs no cluster. `chaosctl dashboard --replay <run-id>` opens straight on that run; `?run=<run-id>/<exp>` in
+the URL does the same. **Presentation** (+25 % type, less detail) and **light/dark** are remembered per browser.
 
-**Top to bottom (the order of the demo):**
-1. **Top bar**: run id, connection (Live / Stale / Disconnected / Replay), campaign state, kill switch (armed / triggered),
-   load generator, chart window (2 / 3 / 5 min).
-2. **Phase strip**: Map, Baseline, Agent 1 decides, Inject, Impact and auto-stop, Recover, Agent 2 diagnoses, driven by the
-   run journal.
-3. **System map** (built from the dependency graph, nothing hardcoded): zones Clients, n8n application, Queue and data,
-   External dependency, plus a muted platform lane (namespace, Chaos Mesh, Prometheus, Grafana). Arrows point to what a
-   component depends on. Each node shows one derived state (Healthy, Degraded, Down, Recovering; rule in
-   `chaosctl/dash/model.py`), pods Ready and its own live metric. During an experiment: a fault marker on the target with
-   the pod Chaos Mesh hit, T+seconds and phase, an arrow from Chaos Mesh, an amber outline on the blast radius and
-   "first symptom T+N s" under each node when the harness observed it. Under the map: a workflow strip (W1 / W2 in plain
-   words) and the BUILD_PLAN 11.1 timeline with the recovery time. Click a node for its detail panel.
-4. **Live metrics**: five tiles and three charts on one time axis with inject / symptom / recovered / auto-stop markers
-   and a band while the fault is active. "-" means no data; "Load generator off" is never shown as 0.
-5. **Agent 1 decision**: chosen experiment, reason, cited graph ids, hypothesis, guard verdict, and where the decision
-   came from (LLM model from the journal, cached, or rule-based fallback), plus the candidates table.
-6. **Impact and result**: summary and fate table of the in-flight requests.
-7. **Agent 2 blind diagnosis**: reasoning, root cause, ranked fixes with runbooks, offline grade.
-8. **Event log**: Kubernetes events and journal events, merged and redacted.
+**Tabs.**
+- **Story** (default): six acts, each opening with one plain sentence built from the run's numbers.
+  0 Start (map, baseline numbers) → 1 Agent 1 injects (choice, why with cited graph ids, prediction marked
+  *hypothesis* and later *confirmed / refuted / partly*, safety limits, guard verdict, candidates with the score split
+  into its four terms) → 2 Impact (auto-stop banner, three charts on a shared T+ axis with phase bands, markers,
+  baseline and abort lines, peak and recovery bracket; pod swimlane; recovery timeline; fate bar and table)
+  → 3 Agent 2 diagnoses (blind badge, model or fallback badge, reasoning stepper with evidence chips that open the log,
+  root cause, offline grade) → 4 Fix summary (what broke, why, playbook fixes with effort/impact/change, verify,
+  rollback) → 5 Resilience report (score, or the `chaosctl report --all` command). Then the stretch goals.
+- **Live ops**: live charts and pod swimlane, service tiles, merged error log, "Ask Agent 2" chat.
+- **Compare**: two runs aligned on injection (A dashed, B solid), delta table, one-line verdict, fate bars.
+  Defaults to the before/after pair the stretch-goal card finds (E1 with 1 worker vs 2 workers).
+- **Report**: score gauge, components with weights, ranked experiments, findings, downloads of findings.md/.json.
 
-**API** (all GET, one collector thread samples once per second and serves every browser): `/api/graph`, `/api/state`,
-`/api/components`, `/api/metrics?window=s`, `/api/events?since=ts`, `/api/agent1`, `/api/experiments/<id>`,
-`/api/stream` (Server-Sent Events; the page falls back to polling every 2 s). `POST /api/chat` (the RAG chat) is
-still served for scripts but no longer shown on the page.
+**Fallbacks are never hidden**: every AI output shows its model or a "Rule-based fallback: <reason>" badge, and the
+red banner lists every LLM fallback and harness error from the last hour (`state/degraded.jsonl`). At start the server
+prints which LLM settings it sees (names and model ids, never the key).
 
-**Where the dashboard's data comes from:**
+**Fix summary** (new LLM step): written at the end of `chaosctl diagnose` (or `chaosctl fix-summary --run <id>`) to
+`reports/<run-id>/evidence/fix_summary.json`. Blind like Agent 2 (input: the diagnosis and the chosen playbook entries);
+the LLM writes the sentences, every command comes from `playbook.yaml`; falls back to a playbook-only card.
 
-| On screen | Source | Stored |
-|---|---|---|
-| Orders, errors, latency, load on/off | our load generator records every request | `state/loadgen.sqlite` |
-| Queue waiting/active, key count | Redis via NodePort, live | not stored |
-| Reconciliation gap | Postgres (read-only probe user) via NodePort, live | not stored |
-| mock-api delay / error rate | mock-api `GET /admin` via NodePort | not stored |
-| Pods, restarts, events, Chaos Mesh resources | Kubernetes API, live | not stored |
-| Map nodes and edges, SPOF, blast radius | live cluster via `Graph.build`, every 30 s (else `graph.json`) | `graph.json` |
-| Phases, fault marker, Agent 1 choice | run journal | `reports/<run-id>/journal.jsonl` (+ `reports/plans/`) |
-| Fate table, timeline, recovery time | written when an experiment ends | `reports/<run-id>/evidence/<exp-id>.json` |
-| Agent 2 reasoning | written by `diagnose` | `reports/<run-id>/evidence/*.diagnosis.json` |
+**API** (all GET): live `/api/state`, `/api/components`, `/api/metrics`, `/api/events`, `/api/stream` (SSE, polling
+fallback), `/api/graph`; recorded `/api/runs`, `/api/run/<id>/{summary,series,logs,fates,agent1,diagnosis,fix-summary,
+report}?exp=`, `/api/stretch-goals`, `/api/compare?a=&b=`, `/api/report`, `/api/download?path=` (findings files only).
+Series and logs use seconds relative to injection. `POST /api/chat` is the advisory RAG chat.
 
-The dashboard keeps 15 minutes of 1 s points and the newest 600 events in memory.
+**Where the numbers come from:** client results and latency from `state/loadgen.sqlite`; queue depth, pod readiness,
+Kubernetes events and log lines from the evidence bundle (live: Redis/Postgres via NodePort and the Kubernetes API);
+phases, decisions and markers from `journal.jsonl`; fates and timeline from `evidence/<exp>.json`; diagnosis, fix
+summary and report from their JSON files. Gaps are drawn hatched with the reason ("queue not recorded ...").
 
 ---
 
