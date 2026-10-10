@@ -61,3 +61,15 @@
 - r1010-162355: DISCARDED as invalid: host CPU saturated (load average 46 on 8 cores; Grafana 52 %, Prometheus 38 %, kube-apiserver 43 % from 1 Hz probes), system already degraded before injection.
 - Mitigation: Grafana and Prometheus scaled to 0 (not used by the demo; our dashboard replaces them), pod probe now uses one API call instead of five. 2-worker baseline after: W1 100 %, p95 6.0 s, queue 0.
 - Judge guide: docs/JUDGES_GUIDE.md.
+
+## Final runs today (2026-10-10, host CPU fixed, 2 workers)
+| Run | Experiment | Outcome | Recovery | Fates (in-flight) | Agent 2 (blind) |
+|---|---|---|---|---|---|
+| r1010-155337 | E1 worker kill, 1 worker | backlog never drained | none in 180 s | 10 completed once | CORRECT; fix: 2 workers |
+| r1010-155845 | E1 + strict queue abort 20 | **auto-stopped** (`queue_waiting 22 > 20`) | watchdog OK, no manual action | 6 ok, 1 lost silently, 1 lost visibly | - |
+| r1010-160741 | E1, 1 worker | **auto-stopped** (`w1_p95 24 s > 20 s` after 90 s) -> E2 stays locked | - | 7 ok, 1 lost visibly | - |
+| r1010-163348 | E1 after fix (2 workers) | **passed** | SLIs back in **78.8 s** (pod ready 34 s) | 7 ok, 10 phantom success, 11 lost visibly | CORRECT; found duplicate-key errors on n8n's execution dedup key in Postgres logs; fixes: graceful shutdown, idempotent inserts, async status |
+| r1010-163829 | E2 Redis kill (unlocked by the pass) | **auto-stopped** (`w1_p95 25.8 s > 20 s`) | Redis back in 1.2 s, but n8n-main restarted 1x, workers 2x; ~60 s total outage | 5 ok, 14 phantom success, 10 lost visibly | CORRECT; fixes: Redis AOF + PVC, raise QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD, idempotent inserts |
+
+Key findings: (1) a single worker has no headroom: a kill leaves a permanent backlog; (2) W2 async clients keep getting 200 OK while nothing is processed (silent failure, n8n-main stays Ready); (3) a 1 s Redis restart cascades into ~60 s of total outage because n8n processes exit; (4) killed in-flight work is retried, but clients get errors although the order was written (phantom success).
+Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-call engineer would; Chaos Mesh objects/events are stripped.
