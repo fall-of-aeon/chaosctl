@@ -130,6 +130,7 @@ def resilience() -> dict | None:
         if d.get("ranking") and d.get("overall"):
             return {"path": str(f.relative_to(ROOT)), "generated": f.stat().st_mtime, "source": d.get("source"),
                     "models": d.get("models") or [], "runs": d.get("runs") or [], "overall": d["overall"],
+                    "calibrated_on": d.get("calibrated_on") or [],
                     "ranking": d["ranking"]}
     return None
 

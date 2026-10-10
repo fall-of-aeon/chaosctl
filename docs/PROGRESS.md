@@ -116,3 +116,8 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   "Resilience score and ranking" (overall score + verdict, ranked bars, hover details) reading the newest findings.json,
   and an 8th step "Report & score". Checked visually in light and dark; live AI run on two synthetic runs ranked the
   Redis kill (13) below the worker kill (54). 84 unit tests pass.
+- Resilience score is now **AI-judged** (team decision): Agent 2 scores each component from the evidence with the
+  formula as a reference it may depart from (with a reason), calibrated on its earlier real judgements
+  (state/score_memory.jsonl, in-context calibration, not training), 3 independent judgements (temperature 0.5),
+  median per component; total computed in code. Live on two synthetic runs: worker kill 49.0 (reference 48.7),
+  Redis kill 37.8 (reference 42.8, self-recovery 40/40/60). 87 unit tests pass.
