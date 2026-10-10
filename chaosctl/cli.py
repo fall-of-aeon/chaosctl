@@ -336,11 +336,12 @@ def killswitch_test(via: list[str] = typer.Option(["cli", "file", "signal"]), re
 
 
 @app.command()
-def dashboard(port: int = 8787):
-    """Live impact dashboard (open http://127.0.0.1:8787 next to the terminal)."""
-    from chaosctl.dashboard import serve
+def dashboard(port: int = 8787,
+              replay: str = typer.Option(None, help="serve a recorded run from reports/<run-id>/ instead of live data")):
+    """Live impact dashboard (open http://127.0.0.1:8787 next to the terminal). Read-only."""
+    from chaosctl.dash.server import serve
 
-    serve(port)
+    serve(port, replay)
 
 
 @app.command()

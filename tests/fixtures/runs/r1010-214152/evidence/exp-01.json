@@ -1,0 +1,2898 @@
+{
+  "exp_id": "exp-01",
+  "baseline": {
+    "captured_at": 1791630207.231746,
+    "duration_s": 90,
+    "rate": 2.0,
+    "w1": {
+      "n": 75,
+      "ok": 75,
+      "success_rate": 1.0,
+      "error_rate": 0.0,
+      "p50_ms": 4257.8,
+      "p95_ms": 5972.7
+    },
+    "w2": {
+      "n": 71,
+      "ok": 71,
+      "success_rate": 1.0,
+      "error_rate": 0.0,
+      "p50_ms": 55.0,
+      "p95_ms": 134.7
+    },
+    "queue": {
+      "wait_mean": 0,
+      "wait_max": 0,
+      "wait_trend": 0,
+      "active_mean": 8.38
+    }
+  },
+  "trace": [
+    {
+      "t": 0.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4210.0,
+        "p95_ms": 4316.4
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 42.4,
+        "p95_ms": 62.7
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 8,
+        "dbsize": 33
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 1.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4250.0,
+        "p95_ms": 4353.9
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 53.8,
+        "p95_ms": 145.1
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 9,
+        "dbsize": 35
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 2.4,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4311.1,
+        "p95_ms": 4353.9
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 62.7,
+        "p95_ms": 145.1
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 9,
+        "dbsize": 35
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 3.4,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4311.1,
+        "p95_ms": 4360.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 63.8,
+        "p95_ms": 145.1
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 9,
+        "dbsize": 35
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 4.6,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4311.1,
+        "p95_ms": 4360.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 66.9,
+        "p95_ms": 145.1
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 10,
+        "dbsize": 37
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 5.6,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4353.9,
+        "p95_ms": 4529.6
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 66.9,
+        "p95_ms": 115.7
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 6.9,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4360.1,
+        "p95_ms": 4529.6
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 70.5,
+        "p95_ms": 115.7
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 8.0,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4407.4,
+        "p95_ms": 4529.6
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 70.5,
+        "p95_ms": 115.7
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 9.0,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4407.4,
+        "p95_ms": 4529.6
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 70.5,
+        "p95_ms": 115.7
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 10.1,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4407.4,
+        "p95_ms": 4529.6
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 48.9,
+        "p95_ms": 115.7
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 11.2,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4407.4,
+        "p95_ms": 4434.9
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 48.9,
+        "p95_ms": 70.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 12.2,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4343.3,
+        "p95_ms": 4434.9
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 48.9,
+        "p95_ms": 59.9
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 13.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4336.6,
+        "p95_ms": 4434.9
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 48.9,
+        "p95_ms": 59.9
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 14.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4377.3,
+        "p95_ms": 4434.9
+      },
+      "w2": {
+        "n": 6,
+        "ok": 6,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 54.4,
+        "p95_ms": 210.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 42
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 15.4,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4294.2,
+        "p95_ms": 4379.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 54.4,
+        "p95_ms": 210.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 42
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 16.4,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4208.6,
+        "p95_ms": 4379.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 56.1,
+        "p95_ms": 210.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 42
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 17.5,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4183.4,
+        "p95_ms": 4379.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 86.6,
+        "p95_ms": 210.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 43
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 18.5,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4208.6,
+        "p95_ms": 4542.3
+      },
+      "w2": {
+        "n": 6,
+        "ok": 6,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 88.7,
+        "p95_ms": 210.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 19.6,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4207.9,
+        "p95_ms": 4542.3
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 88.7,
+        "p95_ms": 142.6
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 20.6,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4208.6,
+        "p95_ms": 4542.3
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 88.7,
+        "p95_ms": 142.6
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 21.7,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4216.9,
+        "p95_ms": 4542.3
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 86.6,
+        "p95_ms": 142.6
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 22.7,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4216.9,
+        "p95_ms": 4542.3
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 75.6,
+        "p95_ms": 142.6
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 23.8,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4207.9,
+        "p95_ms": 4331.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 63.7,
+        "p95_ms": 142.6
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 24.8,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4154.7,
+        "p95_ms": 4331.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 53.5,
+        "p95_ms": 75.6
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 25.9,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4154.7,
+        "p95_ms": 4331.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 53.5,
+        "p95_ms": 81.0
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 26.9,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4134.8,
+        "p95_ms": 4255.3
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 53.5,
+        "p95_ms": 81.0
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 28.0,
+      "w1": {
+        "n": 4,
+        "ok": 4,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4154.7,
+        "p95_ms": 4255.3
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 56.7,
+        "p95_ms": 111.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 29.0,
+      "w1": {
+        "n": 4,
+        "ok": 4,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4207.4,
+        "p95_ms": 4255.3
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 67.2,
+        "p95_ms": 111.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 30.0,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4182.3,
+        "p95_ms": 4290.8
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 67.2,
+        "p95_ms": 111.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 31.1,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4189.8,
+        "p95_ms": 4290.8
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 56.7,
+        "p95_ms": 111.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 32.1,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4193.8,
+        "p95_ms": 4290.8
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 67.2,
+        "p95_ms": 111.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 33.1,
+      "w1": {
+        "n": 4,
+        "ok": 4,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4193.8,
+        "p95_ms": 4290.8
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 56.5,
+        "p95_ms": 70.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 34.2,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4193.8,
+        "p95_ms": 4370.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 54.5,
+        "p95_ms": 70.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 35.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4204.8,
+        "p95_ms": 4370.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 56.5,
+        "p95_ms": 70.5
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 36.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4204.8,
+        "p95_ms": 4370.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 65.9,
+        "p95_ms": 99.4
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 37.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4237.4,
+        "p95_ms": 4370.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 67.3,
+        "p95_ms": 99.4
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 38.4,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4204.8,
+        "p95_ms": 4251.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 72.5,
+        "p95_ms": 99.4
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 39.4,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4195.7,
+        "p95_ms": 4237.4
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 72.5,
+        "p95_ms": 99.4
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 40.5,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4191.9,
+        "p95_ms": 4237.4
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 72.5,
+        "p95_ms": 94.2
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 41.6,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4195.7,
+        "p95_ms": 4237.4
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 67.3,
+        "p95_ms": 94.2
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 42.6,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4195.7,
+        "p95_ms": 4208.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 35.1,
+        "p95_ms": 94.2
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 39
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 43.7,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4201.4,
+        "p95_ms": 4249.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 35.1,
+        "p95_ms": 75.3
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 38
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 44.7,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4208.0,
+        "p95_ms": 4310.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 35.1,
+        "p95_ms": 75.3
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 38
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 45.8,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4208.0,
+        "p95_ms": 4310.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 35.1,
+        "p95_ms": 47.9
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 38
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 46.8,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4249.5,
+        "p95_ms": 4310.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 36.4,
+        "p95_ms": 47.9
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 38
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 47.8,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4249.5,
+        "p95_ms": 4310.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 44.8,
+        "p95_ms": 47.9
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 38
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 48.9,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4228.2,
+        "p95_ms": 4310.5
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 44.8,
+        "p95_ms": 52.6
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 49.9,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4204.5,
+        "p95_ms": 4268.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 47.5,
+        "p95_ms": 53.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 50.9,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4204.3,
+        "p95_ms": 4268.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 47.5,
+        "p95_ms": 53.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 38
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 52.0,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4202.6,
+        "p95_ms": 4228.2
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 47.5,
+        "p95_ms": 53.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    },
+    {
+      "t": 53.0,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4197.3,
+        "p95_ms": 4271.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 37.9,
+        "p95_ms": 53.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 54.1,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4202.3,
+        "p95_ms": 4271.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 37.9,
+        "p95_ms": 53.8
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 55.1,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4202.3,
+        "p95_ms": 4303.1
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 37.9,
+        "p95_ms": 48.6
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 56.2,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4271.1,
+        "p95_ms": 4382.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 42.2,
+        "p95_ms": 82.2
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 57.2,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4202.3,
+        "p95_ms": 4382.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 42.2,
+        "p95_ms": 82.2
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 58.2,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4202.3,
+        "p95_ms": 4382.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 48.6,
+        "p95_ms": 82.2
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 59.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4196.5,
+        "p95_ms": 4382.0
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 42.2,
+        "p95_ms": 82.2
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 11,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 60.3,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4196.5,
+        "p95_ms": 4382.0
+      },
+      "w2": {
+        "n": 6,
+        "ok": 6,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 49.0,
+        "p95_ms": 82.2
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 41
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 61.4,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4172.0,
+        "p95_ms": 4346.7
+      },
+      "w2": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 45.6,
+        "p95_ms": 63.1
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 12,
+        "dbsize": 40
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 62.4,
+      "w1": {
+        "n": 5,
+        "ok": 5,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4196.5,
+        "p95_ms": 4618.9
+      },
+      "w2": {
+        "n": 4,
+        "ok": 4,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 45.6,
+        "p95_ms": 63.1
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 10,
+        "dbsize": 35
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 4
+    },
+    {
+      "t": 63.5,
+      "w1": {
+        "n": 4,
+        "ok": 4,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 4346.7,
+        "p95_ms": 4618.9
+      },
+      "w2": {
+        "n": 3,
+        "ok": 3,
+        "success_rate": 1.0,
+        "error_rate": 0.0,
+        "p50_ms": 45.6,
+        "p95_ms": 63.1
+      },
+      "queue": {
+        "reachable": true,
+        "wait": 0,
+        "active": 9,
+        "dbsize": 33
+      },
+      "pods": {
+        "n8n-main": {
+          "ready": true
+        },
+        "n8n-worker": {
+          "ready": true
+        },
+        "redis": {
+          "ready": true
+        },
+        "postgres": {
+          "ready": true
+        },
+        "mock-api": {
+          "ready": true
+        }
+      },
+      "w1_pending": 5
+    }
+  ],
+  "events": [
+    {
+      "ts": 1791648811.0,
+      "type": "Normal",
+      "reason": "FinalizerInited",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Finalizer has been inited"
+    },
+    {
+      "ts": 1791648811.0,
+      "type": "Normal",
+      "reason": "Updated",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Successfully update finalizer of resource"
+    },
+    {
+      "ts": 1791648811.0,
+      "type": "Normal",
+      "reason": "Updated",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Successfully update desiredPhase of resource"
+    },
+    {
+      "ts": 1791648812.0,
+      "type": "Normal",
+      "reason": "Applied",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Successfully apply chaos for n8n-chaos/n8n-worker-6cd6854ff5-8nqkn"
+    },
+    {
+      "ts": 1791648812.0,
+      "type": "Normal",
+      "reason": "Updated",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Successfully update records of resource"
+    },
+    {
+      "ts": 1791648812.0,
+      "type": "Normal",
+      "reason": "Killing",
+      "object": "n8n-worker-6cd6854ff5-8nqkn",
+      "message": "Stopping container n8n-worker"
+    },
+    {
+      "ts": 1791648812.0,
+      "type": "Normal",
+      "reason": "SuccessfulCreate",
+      "object": "n8n-worker-6cd6854ff5",
+      "message": "Created pod: n8n-worker-6cd6854ff5-5rvqm"
+    },
+    {
+      "ts": 1791648812.374925,
+      "type": "Normal",
+      "reason": "Scheduled",
+      "object": "n8n-worker-6cd6854ff5-5rvqm",
+      "message": "Successfully assigned n8n-chaos/n8n-worker-6cd6854ff5-5rvqm to chaos-control-plane"
+    },
+    {
+      "ts": 1791648813.0,
+      "type": "Normal",
+      "reason": "Pulled",
+      "object": "n8n-worker-6cd6854ff5-5rvqm",
+      "message": "Container image \"docker.n8n.io/n8nio/n8n:2.42.4\" already present on machine and can be accessed by the pod"
+    },
+    {
+      "ts": 1791648813.0,
+      "type": "Normal",
+      "reason": "Created",
+      "object": "n8n-worker-6cd6854ff5-5rvqm",
+      "message": "Container created"
+    },
+    {
+      "ts": 1791648813.0,
+      "type": "Normal",
+      "reason": "Started",
+      "object": "n8n-worker-6cd6854ff5-5rvqm",
+      "message": "Container started"
+    },
+    {
+      "ts": 1791648815.0,
+      "type": "Warning",
+      "reason": "FailedPreStopHook",
+      "object": "n8n-worker-6cd6854ff5-8nqkn",
+      "message": "PreStopHook failed"
+    },
+    {
+      "ts": 1791648875.0,
+      "type": "Normal",
+      "reason": "Deleted",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Experiment has been deleted"
+    },
+    {
+      "ts": 1791648875.0,
+      "type": "Normal",
+      "reason": "Updated",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Successfully update desiredPhase of resource"
+    },
+    {
+      "ts": 1791648875.0,
+      "type": "Normal",
+      "reason": "Recovered",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Successfully recover chaos for n8n-chaos/n8n-worker-6cd6854ff5-8nqkn"
+    },
+    {
+      "ts": 1791648875.0,
+      "type": "Normal",
+      "reason": "Updated",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Successfully update records of resource"
+    },
+    {
+      "ts": 1791648875.0,
+      "type": "Normal",
+      "reason": "FinalizerInited",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Finalizer has been removed"
+    },
+    {
+      "ts": 1791648875.0,
+      "type": "Normal",
+      "reason": "Updated",
+      "object": "chaosctl-r1010-214152-worker-pod-kill",
+      "message": "Successfully update finalizer of resource"
+    }
+  ],
+  "logs": {
+    "n8n-main-95bf75569-pqwp8": [],
+    "n8n-worker-6cd6854ff5-5rvqm": [],
+    "n8n-worker-6cd6854ff5-whgxb": [],
+    "redis-6c4795cc9b-97l5n": [
+      "1:C 10 Oct 2026 11:09:40.926 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo",
+      "1:C 10 Oct 2026 11:09:40.926 * Redis version=7.4.5, bits=64, commit=00000000, modified=0, pid=1, just started"
+    ],
+    "postgres-0": [
+      "2026-10-10 10:07:00.578 UTC [56] WARNING:  no usable system locales were found",
+      "initdb: warning: enabling \"trust\" authentication for local connections",
+      "2026-10-10 10:09:52.488 UTC [151] ERROR:  duplicate key value violates unique constraint \"IDX_execution_entity_deduplicationKey\"",
+      "2026-10-10 10:10:00.287 UTC [300] ERROR:  duplicate key value violates unique constraint \"IDX_execution_entity_deduplicationKey\"",
+      "2026-10-10 10:59:26.679 UTC [4813] FATAL:  connection to client lost",
+      "2026-10-10 11:00:37.187 UTC [4932] FATAL:  connection to client lost",
+      "2026-10-10 11:00:41.559 UTC [4942] FATAL:  connection to client lost",
+      "2026-10-10 16:08:28.741 UTC [11544] FATAL:  connection to client lost"
+    ],
+    "mock-api-7b7f86946d-bg9pv": []
+  },
+  "fates": {
+    "rows": [
+      {
+        "request_id": "08975e49-1c86-4f7d-b0f2-090c38cfaf15",
+        "workflow": "W1",
+        "client": "success",
+        "rows": 1,
+        "fate": "completed_once",
+        "late": false
+      },
+      {
+        "request_id": "68555ee9-c3d2-47b8-b518-18b94bc49998",
+        "workflow": "W2",
+        "client": "success",
+        "rows": 1,
+        "fate": "completed_once",
+        "late": false
+      },
+      {
+        "request_id": "6d547080-8177-47a9-855b-fa427affe27c",
+        "workflow": "W1",
+        "client": "success",
+        "rows": 1,
+        "fate": "completed_once",
+        "late": false
+      },
+      {
+        "request_id": "7a3e0e46-33af-4b07-b6f0-ad4a75c52dea",
+        "workflow": "W1",
+        "client": "success",
+        "rows": 1,
+        "fate": "completed_once",
+        "late": false
+      },
+      {
+        "request_id": "abc9cf83-f9c3-496e-b258-a600b71a452c",
+        "workflow": "W2",
+        "client": "success",
+        "rows": 1,
+        "fate": "completed_once",
+        "late": false
+      },
+      {
+        "request_id": "ae63da87-575e-4074-94eb-f799fe77bd0c",
+        "workflow": "W2",
+        "client": "success",
+        "rows": 1,
+        "fate": "completed_once",
+        "late": false
+      },
+      {
+        "request_id": "fdc925b6-efe6-4242-a396-e0e18badda95",
+        "workflow": "W1",
+        "client": "success",
+        "rows": 1,
+        "fate": "completed_once",
+        "late": false
+      },
+      {
+        "request_id": "fea42221-0f7f-440a-895c-cfd9576f4718",
+        "workflow": "W2",
+        "client": "success",
+        "rows": 0,
+        "fate": "lost_silently",
+        "late": false
+      }
+    ],
+    "summary": {
+      "completed_once": 7,
+      "lost_silently": 1,
+      "duplicated": 0,
+      "phantom_success": 0,
+      "lost_visible": 0,
+      "success_without_row": 0
+    }
+  },
+  "timeline": {
+    "t_inject": 1791648811.7773728,
+    "t_first_symptom": null,
+    "t_pod_ready": 33.2,
+    "t_slis_recovered": 33.2,
+    "t_queue_drained": 33.2,
+    "saw_symptom": false,
+    "t_last_inflight_resolved": 4.0
+  },
+  "restarts_delta": {
+    "n8n-main": 0,
+    "n8n-worker": 0,
+    "redis": 0,
+    "postgres": 0,
+    "mock-api": 0
+  },
+  "recovery_time_s": 33.2,
+  "manual_action_needed": false,
+  "status": "completed"
+}
