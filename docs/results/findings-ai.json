@@ -1,0 +1,631 @@
+{
+  "source": "llm",
+  "models": [
+    "ministral-14b-latest"
+  ],
+  "runs": [
+    "r1011-023307",
+    "r1011-024059",
+    "r1011-024619",
+    "r1011-025233",
+    "r1011-025735"
+  ],
+  "overall": {
+    "score": 55,
+    "verdict": "fragile"
+  },
+  "ranking": {
+    "experiments": [
+      {
+        "exp_ref": "r1011-025735/exp-02",
+        "title": "Redis pod kill",
+        "alias": "E2",
+        "target": "redis",
+        "status": "aborted",
+        "score": 35,
+        "verdict": "failing",
+        "rank": 1,
+        "weakest": "self_recovery"
+      },
+      {
+        "exp_ref": "r1011-024619/exp-01",
+        "title": "Worker pod kill",
+        "alias": "E1",
+        "target": "n8n-worker",
+        "status": "aborted",
+        "score": 62,
+        "verdict": "fragile",
+        "rank": 2,
+        "weakest": "self_recovery"
+      },
+      {
+        "exp_ref": "r1011-024059/exp-01",
+        "title": "Worker pod kill",
+        "alias": "E1",
+        "target": "n8n-worker",
+        "status": "completed",
+        "score": 77,
+        "verdict": "degraded but recovered",
+        "rank": 3,
+        "weakest": "detectability"
+      },
+      {
+        "exp_ref": "r1011-023307/exp-01",
+        "title": "Worker pod kill",
+        "alias": "E1",
+        "target": "n8n-worker",
+        "status": "completed",
+        "score": 80,
+        "verdict": "degraded but recovered",
+        "rank": 4,
+        "weakest": "detectability"
+      },
+      {
+        "exp_ref": "r1011-025233/exp-01",
+        "title": "Worker pod kill",
+        "alias": "E1",
+        "target": "n8n-worker",
+        "status": "completed",
+        "score": 88,
+        "verdict": "resilient",
+        "rank": 5,
+        "weakest": "detectability"
+      }
+    ],
+    "components": [
+      {
+        "component": "detectability",
+        "weight": 0.1,
+        "mean": 20.0,
+        "n": 5
+      },
+      {
+        "component": "self_recovery",
+        "weight": 0.25,
+        "mean": 57.0,
+        "n": 5
+      },
+      {
+        "component": "latency",
+        "weight": 0.2,
+        "mean": 63.6,
+        "n": 5
+      },
+      {
+        "component": "data_integrity",
+        "weight": 0.15,
+        "mean": 83.4,
+        "n": 5
+      },
+      {
+        "component": "availability",
+        "weight": 0.3,
+        "mean": 89.8,
+        "n": 5
+      }
+    ]
+  },
+  "summary": {
+    "executive_summary": "Chaos experiments on **n8n in queue mode** (Kubernetes) revealed critical weaknesses in **data integrity, detectability, and resilience** under worker and Redis failures. **Silent data loss** (1\u20132% of orders lost without client awareness) and **phantom successes** (clients receiving errors despite order persistence) occurred during worker pod kills and Redis disruptions. While **W2 (async) clients** always received 200 OK responses (masking failures), **W1 (sync) clients** suffered visible failures and latency spikes (up to 23.4s p95). The system **self-recovered** in most worker-kill scenarios (~70s) but **failed to recover autonomously** during Redis disruptions, requiring watchdog intervention. **No duplicates** were observed, but **detectability gaps** (e.g., silent async failures, lost work) and **cascading restarts** (Redis \u2192 n8n-main/worker) exacerbated risks. **Overall resilience is fragile**, with scores ranging from **35 (failing) to 88 (resilient)** across experiments.",
+    "environment": "The system under test was **n8n in queue mode** deployed on Kubernetes, with **n8n-main** receiving webhooks and enqueuing jobs in Redis, while **n8n-worker pods** processed jobs (4s mock-api delay) and wrote orders to Postgres. Two workflow types were tested: **W1 (synchronous, client waits for result)** and **W2 (asynchronous, client gets 200 OK immediately)**. A load generator injected synthetic orders and verified Postgres consistency. The baseline showed **100% success rates** for both W1 and W2, with **W1 p95 latency at 4.06s** and **W2 p95 at 24.2ms**.",
+    "weaknesses": [
+      {
+        "title": "Silent Data Loss in Async Workflows (W2)",
+        "severity": "Critical",
+        "explanation": "W2 clients consistently received **200 OK** responses even when orders were silently lost (1\u20132% of in-flight orders during worker pod kills). This **undetectable failure mode** violates data integrity and misleads clients into assuming success. The system lacks mechanisms to alert clients of async job failures post-acceptance.",
+        "evidence": [
+          "silent_async_failure",
+          "lost_work"
+        ],
+        "seen_in": [
+          "r1011-024059/exp-01",
+          "r1011-024619/exp-01"
+        ],
+        "fixes": [
+          "async_status_callback"
+        ]
+      },
+      {
+        "title": "Visible Data Loss and Phantom Successes During Worker/Redis Failures",
+        "severity": "Critical",
+        "explanation": "Worker pod kills caused **1\u20132 visible order losses** (client errors + no Postgres row) and **1\u20133 phantom successes** (client errors despite order persistence). Redis pod kills introduced **3 phantom successes** due to disrupted result propagation. These inconsistencies erode trust in order processing and require manual reconciliation.",
+        "evidence": [
+          "lost_work",
+          "phantom_success",
+          "dependency_restart"
+        ],
+        "seen_in": [
+          "r1011-024059/exp-01",
+          "r1011-024619/exp-01",
+          "r1011-025735/exp-02"
+        ],
+        "fixes": [
+          "idempotency_keys",
+          "async_status_callback",
+          "redis_persistence"
+        ]
+      },
+      {
+        "title": "Undetected Worker Failures and Latency Degradation",
+        "severity": "High",
+        "explanation": "Worker pod kills degraded **W1 latency to 8.5s p95** (vs 4.1s baseline) and triggered **silent async failure detectors** without client visibility. The system lacks **real-time alerts for stalled consumers** or **queue depth monitoring**, leaving operators unaware of processing gaps until SLIs degrade. Redis failures further amplified latency to **23.4s p95** due to cascading restarts.",
+        "evidence": [
+          "latency_degradation",
+          "silent_async_failure",
+          "dependency_restart"
+        ],
+        "seen_in": [
+          "r1011-024059/exp-01",
+          "r1011-025735/exp-02"
+        ],
+        "fixes": [
+          "queue_depth_alert",
+          "worker_health_probe",
+          "scale_workers",
+          "redis_timeout_threshold"
+        ]
+      },
+      {
+        "title": "No Self-Recovery from Redis Disruptions",
+        "severity": "High",
+        "explanation": "Redis pod kills caused **system-wide failures**, including **phantom successes**, **latency spikes**, and **no autonomous recovery** within the 120s observation window. The watchdog triggered restarts, but SLIs did not return to baseline, demonstrating **critical dependency on Redis stability**. This risks prolonged outages if Redis fails repeatedly.",
+        "evidence": [
+          "dependency_restart",
+          "latency_degradation",
+          "phantom_success"
+        ],
+        "seen_in": [
+          "r1011-025735/exp-02"
+        ],
+        "fixes": [
+          "redis_persistence",
+          "redis_timeout_threshold"
+        ]
+      },
+      {
+        "title": "False Positives in Silent Failure Detection",
+        "severity": "Medium",
+        "explanation": "The **silent_async_failure detector** fired falsely in experiments where **no silent loss occurred** (e.g., `r1011-025233/exp-01`), due to W2\u2019s immediate 200 OK responses during transient worker unavailability. This **noisy alerting** reduces trust in monitoring and may lead to unnecessary interventions.",
+        "evidence": [
+          "silent_async_failure"
+        ],
+        "seen_in": [
+          "r1011-023307/exp-01",
+          "r1011-025233/exp-01"
+        ],
+        "fixes": [
+          "async_status_callback",
+          "worker_health_probe"
+        ]
+      }
+    ],
+    "fixes": [
+      {
+        "playbook_id": "async_status_callback",
+        "priority": 1,
+        "why": "This directly addresses the **most critical weakness**: silent data loss in async workflows (W2). By providing clients with **real-time status callbacks** (e.g., execution IDs + outcome endpoints), the system can **eliminate undetectable failures** and alert clients of async job failures. It also mitigates phantom successes by clarifying order persistence.",
+        "addresses": [
+          "Silent Data Loss in Async Workflows (W2)",
+          "Visible Data Loss and Phantom Successes During Worker/Redis Failures"
+        ]
+      },
+      {
+        "playbook_id": "redis_persistence",
+        "priority": 2,
+        "why": "Redis disruptions caused **phantom successes** and **no self-recovery**, risking prolonged outages. Enabling **AOF persistence** ensures queue state survives restarts, preventing lost work and reducing dependency on Redis availability. This is critical for **data integrity** during Redis failures.",
+        "addresses": [
+          "Visible Data Loss and Phantom Successes During Worker/Redis Failures",
+          "No Self-Recovery from Redis Disruptions"
+        ]
+      },
+      {
+        "playbook_id": "scale_workers",
+        "priority": 3,
+        "why": "Worker pod kills degraded **W1 latency** and caused **lost work** due to insufficient parallelism. Running **2 workers** (instead of 1) reduces backlog during failures, improving **resilience to consumer outages** and **draining queues faster**. This is a low-effort, high-impact fix for **latency degradation** and **backlog risks**.",
+        "addresses": [
+          "Undetected Worker Failures and Latency Degradation"
+        ]
+      },
+      {
+        "playbook_id": "idempotency_keys",
+        "priority": 4,
+        "why": "While no duplicates were observed, **phantom successes** (3 instances) and the risk of **silent retries** justify making order inserts **idempotent**. This prevents **double execution** and ensures **consistent state** even if jobs are retried due to transient failures.",
+        "addresses": [
+          "Visible Data Loss and Phantom Successes During Worker/Redis Failures"
+        ]
+      },
+      {
+        "playbook_id": "queue_depth_alert",
+        "priority": 5,
+        "why": "The system lacks alerts for **stalled consumers** or **queue backlogs**, leaving operators unaware of processing gaps until SLIs degrade. Adding **Prometheus rules for `jobs_waiting > 50`** and **zero active consumers** would enable **proactive detection** of worker failures, improving **observability** and reducing MTTR.",
+        "addresses": [
+          "Undetected Worker Failures and Latency Degradation"
+        ]
+      },
+      {
+        "playbook_id": "worker_health_probe",
+        "priority": 6,
+        "why": "Current worker readiness probes (e.g., `pgrep`) fail to detect **Redis connectivity issues**, leading to **false silent failures**. A **Redis-aware health check** would prevent workers from being marked healthy while unable to process jobs, reducing **undetected failures** and noisy alerts.",
+        "addresses": [
+          "False Positives in Silent Failure Detection",
+          "Undetected Worker Failures and Latency Degradation"
+        ]
+      }
+    ],
+    "overall_score": 55,
+    "limitations": "This report is limited to **worker pod kills** and **Redis pod kills** in a **controlled Kubernetes environment**. It does not test: (1) **network partitions** between n8n components, (2) **Postgres failures**, (3) **multi-region Redis disruptions**, (4) **concurrent failures** (e.g., worker + Redis kills), or (5) **custom workflows beyond W1/W2**. Additionally, **detector coverage** was incomplete (e.g., no `duplicates` or `success_without_row` detectors fired), and **baseline experiments** did not stress-test **high-order volumes** or **edge cases like Redis forks. The observed resilience may not hold under **higher load or cascading failures**."
+  },
+  "experiments": [
+    {
+      "exp_ref": "r1011-023307/exp-01",
+      "headline": "Worker pod kill caused no data loss or duplicates but degraded W1 latency while W2 remained unaffected.",
+      "why_chosen": "The experiment targeted the resilience of async job execution under worker pod failure, focusing on W1/W2 workflows and Redis/mock-api dependencies.",
+      "expected_vs_observed": "The hypothesis predicted job requeuing within 30s and \u226410% W1/W2 failure rate, but no failures occurred; instead, W1 latency spiked while W2 success remained at 100%. The blind diagnosis incorrectly assumed silent failures, but facts showed no silent losses or duplicates.",
+      "impact": "W1 clients experienced degraded latency (p95 rose to 4126.6ms from 4056.8ms baseline), but no orders were lost or duplicated; W2 clients saw no impact (100% success rate). No customer-facing order failures occurred.",
+      "recovery": "The system self-recovered within 70.1s (SLIs back to baseline) without manual intervention, though W1 latency remained elevated until full resolution.",
+      "root_cause": "Abrupt termination of the `n8n-worker` pod (ev:events) caused in-flight W1 jobs to stall, but Redis persistence and worker auto-recovery prevented data loss or duplication. The blind diagnosis overstated silent failures; no silent losses occurred.",
+      "evidence": [
+        "agent1_plan",
+        "agent2_diagnosis",
+        "baseline",
+        "fates",
+        "guard",
+        "knowledge",
+        "silent_async_failure",
+        "timeline",
+        "trace"
+      ],
+      "scores": [
+        {
+          "component": "availability",
+          "score": 98,
+          "reason": "W1 success rate after injection was 98% (490/500), only 2% lower than baseline (100%)."
+        },
+        {
+          "component": "self_recovery",
+          "score": 95,
+          "reason": "SLIs recovered within 70.1s without manual action, though slightly slower than the 'excellent' 30s threshold."
+        },
+        {
+          "component": "latency",
+          "score": 60,
+          "reason": "Peak W1 p95 latency rose to 4126.6ms (baseline: 4056.8ms), a 1.2% increase, but well below the 20000ms abort limit."
+        },
+        {
+          "component": "data_integrity",
+          "score": 100,
+          "reason": "All 8 in-flight orders completed exactly once (0 lost, duplicated, or phantom successes)."
+        },
+        {
+          "component": "detectability",
+          "score": 0,
+          "reason": "Health checks remained green throughout the outage (ev:timeline, ev:guard), despite W1 latency degradation."
+        }
+      ],
+      "total": 80,
+      "verdict": "degraded but recovered"
+    },
+    {
+      "exp_ref": "r1011-024059/exp-01",
+      "headline": "Worker pod kill caused silent and visible order loss while W2 clients remained unaware, but the system self-recovered within 70 seconds.",
+      "why_chosen": "The experiment targeted the single point of failure in the n8n-worker node, which directly impacted in-flight orders and degraded W1 latency, while W2 clients continued receiving 200 OK responses despite failures.",
+      "expected_vs_observed": "The hypothesis predicted W1 failures, W2 200 OK responses, and potential duplicates or phantom successes, but only silent and visible losses occurred (1 each), with no duplicates or phantom successes observed. The system recovered autonomously without manual intervention, aligning with the guard's recovery deadline.",
+      "impact": "Customer impact included **W1**: 2% visible failure rate (1/498) and degraded latency (p95 peaked at 8.46 s vs baseline 4.05 s), while **W2** showed no visible impact (100% success rate). Orders were lost silently (1) and visibly (1), with no duplicates or phantom successes.",
+      "recovery": "The system recovered autonomously within **70 seconds**, with SLIs returning to baseline and no manual action required. The watchdog did not intervene, and no restarts occurred.",
+      "root_cause": "The blind diagnosis was partially correct: the worker pod kill directly caused order loss (silent and visible) due to failed job execution, but no duplicates or phantom successes occurred. The **detectability gap** was confirmed, as W2 clients remained unaware of failures despite degraded W1 performance.",
+      "evidence": [
+        "fates",
+        "latency_degradation",
+        "lost_work",
+        "silent_async_failure",
+        "timeline",
+        "guard",
+        "baseline"
+      ],
+      "scores": [
+        {
+          "component": "availability",
+          "score": 98,
+          "reason": "W1 success rate after injection was 98% (488/498), with only 1 visible failure and 1 silent loss."
+        },
+        {
+          "component": "self_recovery",
+          "score": 95,
+          "reason": "The system recovered autonomously within 70 seconds, well under the 120-second recovery deadline, with no manual intervention."
+        },
+        {
+          "component": "latency",
+          "score": 60,
+          "reason": "W1 p95 latency peaked at 8.46 s (vs baseline 4.05 s), a 2.08x increase, but remained under the 20 s abort limit (20,000 ms)."
+        },
+        {
+          "component": "data_integrity",
+          "score": 78,
+          "reason": "7 out of 9 in-flight orders completed exactly once (78%), with 1 silent loss and 1 visible loss, and no duplicates or phantom successes."
+        },
+        {
+          "component": "detectability",
+          "score": 0,
+          "reason": "W2 clients received 100% 200 OK responses despite silent failures, confirming a detectability gap where async clients remained unaware of order loss."
+        }
+      ],
+      "total": 77,
+      "verdict": "degraded but recovered"
+    },
+    {
+      "exp_ref": "r1011-024619/exp-01",
+      "headline": "Worker pod kill caused silent and visible order loss while W2 maintained 100% client success rates, with no self-recovery observed.",
+      "why_chosen": "The experiment targeted worker pod resilience, and the observed outcomes directly reflect the impact of worker pod failure on order processing and system recovery.",
+      "expected_vs_observed": "The hypothesis predicted W1 failures and W2 200 OK responses, which held true, but the system did not self-recover within the recovery deadline, and silent data loss occurred despite W2's consistent 100% success rate. Duplicates and phantom successes were not observed, contradicting the hypothesis.",
+      "impact": "Customer impact included **W1**: 100% success rate preserved but with **1 visible loss** (1/20 requests failed) and **1 silent loss** (1/20 requests succeeded but no order persisted). **W2**: 100% client success rate (200 OK) but **1 silent loss** (no order persisted). Orders were not duplicated or phantom-successed. SLIs did not recover within the 120 s deadline.",
+      "recovery": "The system did not self-recover; the watchdog had to intervene (manual action not needed), and SLIs remained degraded after 120 s. The queue drained after 60 s, but the lost work detector fired due to silent/visible losses.",
+      "root_cause": "The blind diagnosis was partially correct: worker pod failure caused lost work (silent and visible), but the system lacked mechanisms to detect or recover from silent failures (e.g., no client-side validation for W2's 200 OK). The hypothesis overestimated resilience by assuming retries would prevent silent loss.",
+      "evidence": [
+        "fates",
+        "timeline",
+        "lost_work",
+        "guard",
+        "baseline"
+      ],
+      "scores": [
+        {
+          "component": "availability",
+          "score": 100,
+          "reason": "W1 maintained 100% success rate (20/20 requests succeeded) despite worker pod failure."
+        },
+        {
+          "component": "self_recovery",
+          "score": 0,
+          "reason": "SLIs did not recover within the 120 s deadline, and the watchdog had to intervene (no autonomous recovery)."
+        },
+        {
+          "component": "latency",
+          "score": 100,
+          "reason": "Peak W1 p95 latency (4051.6 ms) remained at baseline (4056.8 ms), well below the 20,000 ms abort limit."
+        },
+        {
+          "component": "data_integrity",
+          "score": 77,
+          "reason": "7/9 in-flight orders completed once (77.8%), while 1 was lost silently and 1 visibly (no duplicates or phantom successes)."
+        },
+        {
+          "component": "detectability",
+          "score": 0,
+          "reason": "Health checks remained green throughout the outage, failing to expose silent data loss (W2's 200 OK masked the issue)."
+        }
+      ],
+      "total": 62,
+      "verdict": "fragile"
+    },
+    {
+      "exp_ref": "r1011-025233/exp-01",
+      "headline": "Worker pod kill caused no data loss or duplicates, but triggered a silent async failure detector despite full recovery within 70 seconds.",
+      "why_chosen": "The experiment targeted worker pod resilience, and the observed outcomes directly relate to the injected fault and its impact on async workflows (W2).",
+      "expected_vs_observed": "The hypothesis predicted job loss and duplicates, but none occurred; instead, the system triggered a silent async failure detector due to W2 clients receiving 200 OK without job completion, though all jobs eventually succeeded. The guard\u2019s abort limits were not breached, and recovery was automatic and fast.",
+      "impact": "No customer impact on W1 or W2 success rates (both remained at 100% after injection), and no orders were lost or duplicated. The only observed issue was a transient silent async failure detector firing due to W2\u2019s immediate 200 OK responses during worker pod restart.",
+      "recovery": "The system recovered autonomously within 70 seconds, with SLIs returning to baseline and no manual intervention required. The watchdog did not trigger restarts, and all in-flight orders resolved successfully.",
+      "root_cause": "The blind diagnosis was partially correct in identifying worker pod disruption as the root cause, but the facts do not support claims of `maxStalledCount` thresholds or insufficient worker capacity\u2014no job loss, duplicates, or degraded W1 success rates occurred. The silent async failure detector fired due to W2\u2019s immediate 200 OK responses during transient worker unavailability, not due to silent data loss.",
+      "evidence": [
+        "agent1_plan",
+        "agent2_diagnosis",
+        "baseline",
+        "fates",
+        "guard",
+        "knowledge",
+        "silent_async_failure",
+        "timeline",
+        "trace"
+      ],
+      "scores": [
+        {
+          "component": "availability",
+          "score": 100,
+          "reason": "W1 success rate remained at 100% after injection (491/501 successful responses)."
+        },
+        {
+          "component": "self_recovery",
+          "score": 95,
+          "reason": "The system recovered autonomously within 70 seconds, with SLIs returning to baseline and no manual intervention required."
+        },
+        {
+          "component": "latency",
+          "score": 98,
+          "reason": "Peak W1 p95 latency rose from 4056.8 ms (baseline) to 4593.4 ms, well below the abort limit of 20000 ms."
+        },
+        {
+          "component": "data_integrity",
+          "score": 100,
+          "reason": "All 8 in-flight orders completed exactly once, with no silent loss, visible loss, duplicates, or phantom successes."
+        },
+        {
+          "component": "detectability",
+          "score": 0,
+          "reason": "A silent async failure detector fired despite no actual data loss, indicating a false positive in detectability during transient worker unavailability."
+        }
+      ],
+      "total": 88,
+      "verdict": "resilient"
+    },
+    {
+      "exp_ref": "r1011-025735/exp-02",
+      "headline": "Redis pod kill caused W1 latency spikes, phantom successes, and partial data integrity loss without silent failures.",
+      "why_chosen": "The experiment targeted Redis, a single point of failure for both n8n-main and n8n-worker, with high blast radius and untested resilience (score 0.8).",
+      "expected_vs_observed": "Predicted symptoms like queue unreachability and latency degradation were observed (W1 p95 peaked at 23.4 s vs baseline 4.1 s), but no silent failures occurred; instead, 3 phantom successes and 3 lost orders (phantom successes) were recorded, while 5 orders completed successfully. The system did not recover within the 120 s deadline, and SLIs did not return to baseline.",
+      "impact": "W1 clients experienced 53.3% success rate (75/165) post-injection, with latency spikes to 23.4 s (vs 4.1 s baseline), while W2 clients saw a minimum success rate of 50%. No silent data loss occurred, but 3 phantom successes and 3 lost orders (phantom successes) impacted data integrity.",
+      "recovery": "The system did not recover autonomously; the watchdog triggered restarts (n8n-main: 1, n8n-worker: 2), but SLIs did not return to baseline within the 120 s observation window. The harness aborted due to W1 p95 exceeding the 20 s abort limit.",
+      "root_cause": "The Redis pod kill disrupted job result propagation to W1 clients, causing phantom successes (3) and latency degradation due to dependency restarts (n8n-main and n8n-worker). The blind diagnosis was correct: Redis instability triggered cascading restarts, but no silent failures occurred.",
+      "evidence": [
+        "baseline",
+        "fates",
+        "latency_degradation",
+        "dependency_restart",
+        "phantom_success",
+        "timeline",
+        "guard"
+      ],
+      "scores": [
+        {
+          "component": "availability",
+          "score": 53,
+          "reason": "W1 success rate dropped to 53.3% (75/165) after injection, compared to 100% baseline."
+        },
+        {
+          "component": "self_recovery",
+          "score": 0,
+          "reason": "The system did not recover autonomously; SLIs did not return to baseline, and the watchdog had to intervene with restarts."
+        },
+        {
+          "component": "latency",
+          "score": 0,
+          "reason": "W1 p95 latency peaked at 23.4 s, exceeding the 20 s abort limit by 185% (23.4 s vs 4.1 s baseline)."
+        },
+        {
+          "component": "data_integrity",
+          "score": 62,
+          "reason": "Of 8 in-flight orders, 5 completed once (62.5%), while 3 resulted in phantom successes (no visible loss, but inconsistent state)."
+        },
+        {
+          "component": "detectability",
+          "score": 100,
+          "reason": "Detectors fired for latency degradation, dependency restart, and phantom successes, ensuring the problem was observable."
+        }
+      ],
+      "total": 35,
+      "verdict": "failing"
+    }
+  ],
+  "formula_cross_check": {
+    "r1011-023307/exp-01": 95.6,
+    "r1011-024059/exp-01": 88.1,
+    "r1011-024619/exp-01": 85.2,
+    "r1011-025233/exp-01": 95.6,
+    "r1011-025735/exp-02": 42.2
+  },
+  "unverified_numbers": {
+    "r1011-024059/exp-01": [
+      "2.08",
+      "4.05"
+    ],
+    "r1011-024619/exp-01": [
+      "77.8"
+    ],
+    "r1011-025735/exp-02": [
+      "53.3",
+      "185"
+    ]
+  },
+  "llm_calls": [
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "b216a59d61936441",
+      "source": "api",
+      "latency_s": 8.27
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "f67a99ce6daa75ed",
+      "source": "api",
+      "latency_s": 7.84
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "a0e65be274c6b774",
+      "source": "api",
+      "latency_s": 7.51
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "f621fd44d6c486b6",
+      "source": "api",
+      "latency_s": 11.23
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "920078342646e639",
+      "source": "api",
+      "latency_s": 11.21
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "9577edf04c1318be",
+      "source": "api",
+      "latency_s": 15.82
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "bfac6f481c3ceecf",
+      "source": "api",
+      "latency_s": 13.03
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "05e3a4fb5f6c1555",
+      "source": "api",
+      "latency_s": 13.97
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "7dcd5442f8ae14c5",
+      "source": "api",
+      "latency_s": 15.29
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "dd228e47a94ff045",
+      "source": "api",
+      "latency_s": 13.78
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "6057e4fd1e2a0e02",
+      "source": "api",
+      "latency_s": 17.18
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "e24f9d5b43c61836",
+      "source": "api",
+      "latency_s": 11.89
+    },
+    {
+      "event": "llm",
+      "purpose": "report_experiment",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "800bbc08d0859e86",
+      "source": "api",
+      "latency_s": 17.36
+    },
+    {
+      "event": "llm",
+      "purpose": "report_summary",
+      "model": "ministral-14b-latest",
+      "prompt_hash": "f13bd0e00d98d7c0",
+      "source": "api",
+      "latency_s": 45.67
+    }
+  ]
+}

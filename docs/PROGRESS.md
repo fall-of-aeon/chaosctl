@@ -116,3 +116,18 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   "Resilience score and ranking" (overall score + verdict, ranked bars, hover details) reading the newest findings.json,
   and an 8th step "Report & score". Checked visually in light and dark; live AI run on two synthetic runs ranked the
   Redis kill (13) below the worker kill (54). 84 unit tests pass.
+
+## Final end-to-end acceptance test (2026-10-11, branch e2e-results)
+- Run per `docs/E2E_TEST_PROMPT.md` on a Linux host (Arch, 16 cores, 14 GiB RAM, Docker 29.9, kind 0.33, Helm 4.3),
+  cluster deleted and rebuilt from scratch (cluster-up 7 min 9 s, up 1 min 11 s, bootstrap 64 s). Results with every
+  number: `docs/E2E_RESULTS.md` (**37 PASS, 5 FAIL, 1 GAP**); reports and screenshots in `docs/results/`.
+- Baseline (2 workers, 2 req/s): W1 105/105, p50 4.05 s, p95 4.06 s; W2 p95 24 ms; queue 0.
+- Safety: context refusal, namespace protection, kill switch 9/9 (one cli row showed 10.4 s, a test-harness measurement
+  artifact: the CR was deleted in 0.66 s), auto-stop (`queue_waiting 4 > 3`, r1011-024619; E2 tripped p95 by itself),
+  watchdog never needed manual action, no LOCKED.
+- E1 r1011-025233 (2 workers): completed, queue 0, SLIs 70.0 s, 8/8 completed once. E2 r1011-025735 (`--no-llm`):
+  auto-stopped on p95 23.4 s; Redis back in 1.0 s but n8n-main 1× and workers 2× restarted; 3 phantom successes.
+  Agent 2 (Mistral) correct on both. AI report: overall 55/100, Redis kill 35, worker kill 88.
+- Failures: scripted auto-stop demo (`--queue-abort 20`) never trips on this host; E1 symptoms with 2 workers do not
+  match the knowledge file; `run --exp E2` with the LLM silently runs nothing (Agent 1 is not told the requested
+  fault); the AI report had 7 factual errors. Gap: no E3/E4 in the catalog yet.
