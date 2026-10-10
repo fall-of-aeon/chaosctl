@@ -1,0 +1,32 @@
+# Trimmed for an 8 GB laptop (G3): no Alertmanager, short retention, small requests.
+alertmanager:
+  enabled: false
+prometheus:
+  prometheusSpec:
+    retention: 6h
+    scrapeInterval: 5s
+    evaluationInterval: 5s
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 100m, memory: 300Mi}
+      limits: {memory: 800Mi}
+grafana:
+  adminPassword: chaos-local-only
+  defaultDashboardsEnabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+  resources:
+    requests: {cpu: 50m, memory: 100Mi}
+    limits: {memory: 250Mi}
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+prometheusOperator:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 200Mi}

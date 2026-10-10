@@ -1,0 +1,153 @@
+# Postgres 17 StatefulSet + PVC. Passwords come from Secret pg-secrets (created by scripts/up.sh).
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: postgres-init, namespace: n8n-chaos}
+data:
+  10-orders.sh: |
+    #!/bin/sh
+    set -e
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<SQL
+    CREATE TABLE IF NOT EXISTS orders (
+      id bigserial PRIMARY KEY,
+      request_id uuid NOT NULL,
+      workflow text NOT NULL,
+      received_at timestamptz,
+      completed_at timestamptz NOT NULL DEFAULT now()
+    );
+    -- index only, no unique constraint: count>1 means duplicate execution
+    CREATE INDEX IF NOT EXISTS orders_request_id ON orders (request_id);
+    CREATE ROLE probe LOGIN PASSWORD '$PROBE_PASSWORD';
+    GRANT CONNECT ON DATABASE $POSTGRES_DB TO probe;
+    GRANT USAGE ON SCHEMA public TO probe;
+    GRANT SELECT ON orders TO probe;
+    SQL
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: n8n-chaos
+  labels: {app: postgres}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17.6-alpine
+          env:
+            - {name: POSTGRES_DB, value: n8n}
+            - {name: POSTGRES_USER, value: n8n}
+            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: pg-secrets, key: password}}}
+            - {name: PROBE_PASSWORD, valueFrom: {secretKeyRef: {name: pg-secrets, key: probe-password}}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{containerPort: 5432, name: pg}]
+          readinessProbe: {exec: {command: ["pg_isready", "-U", "n8n", "-d", "n8n"]}, periodSeconds: 5}
+          resources: {requests: {cpu: 100m, memory: 128Mi}}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d}
+      volumes:
+        - {name: init, configMap: {name: postgres-init}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: n8n-chaos}
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: pg, name: pg}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres-nodeport, namespace: n8n-chaos}
+spec:
+  type: NodePort
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: pg, nodePort: 30432, name: pg}]
+# Baseline: single replica, NO persistence. A restart empties the queue (E2 relies on this).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: n8n-chaos
+  labels: {app: redis}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: redis}}
+  template:
+    metadata: {labels: {app: redis}}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4.5-alpine
+          args: ["--save", "", "--appendonly", "no"]
+          ports: [{containerPort: 6379, name: redis}]
+          readinessProbe: {exec: {command: ["redis-cli", "ping"]}, periodSeconds: 5}
+          resources: {requests: {cpu: 50m, memory: 64Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redis, namespace: n8n-chaos}
+spec:
+  selector: {app: redis}
+  ports: [{port: 6379, targetPort: redis, name: redis}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redis-nodeport, namespace: n8n-chaos}
+spec:
+  type: NodePort
+  selector: {app: redis}
+  ports: [{port: 6379, targetPort: redis, nodePort: 30379, name: redis}]
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-api
+  namespace: n8n-chaos
+  labels: {app: mock-api}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: mock-api}}
+  template:
+    metadata: {labels: {app: mock-api}}
+    spec:
+      containers:
+        - name: mock-api
+          image: chaosctl/mock-api:0.1.0
+          imagePullPolicy: Never
+          ports: [{containerPort: 8080, name: http}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 5}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mock-api, namespace: n8n-chaos}
+spec:
+  selector: {app: mock-api}
+  ports: [{port: 8080, targetPort: http, name: http}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mock-api-nodeport, namespace: n8n-chaos}
+spec:
+  type: NodePort
+  selector: {app: mock-api}
+  ports: [{port: 8080, targetPort: http, nodePort: 30808, name: http}]
+# Host access to n8n main (webhooks + UI) via Kind NodePort 30678 -> 127.0.0.1:15678.
+apiVersion: v1
+kind: Service
+metadata: {name: n8n-main-nodeport, namespace: n8n-chaos}
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/component: main
+  ports: [{port: 5678, targetPort: 5678, nodePort: 30678, name: http}]

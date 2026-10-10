@@ -1,0 +1,12 @@
+# Single-node Kind cluster. Fault-target services are reached from the host via
+# NodePorts (never port-forward, which dies with the pod it is bound to).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: chaos
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - {containerPort: 30678, hostPort: 15678, listenAddress: "127.0.0.1", protocol: TCP}  # n8n main (webhooks/UI)
+      - {containerPort: 30379, hostPort: 16379, listenAddress: "127.0.0.1", protocol: TCP}  # redis
+      - {containerPort: 30432, hostPort: 15432, listenAddress: "127.0.0.1", protocol: TCP}  # postgres (read-only probe user)
+      - {containerPort: 30808, hostPort: 18080, listenAddress: "127.0.0.1", protocol: TCP}  # mock-api admin

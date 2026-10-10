@@ -1,0 +1,41 @@
+# Declared dependency knowledge that manifests cannot show (BUILD_PLAN section 7.3).
+# Edge direction: "A -> B" means A depends on B. Overlay wins over discovery.
+namespace: n8n-chaos
+
+# Maps graph node names to Kubernetes workloads.
+workloads:
+  n8n-main: {kind: Deployment, name: n8n-main}
+  n8n-worker: {kind: Deployment, name: n8n-worker}
+  redis: {kind: Deployment, name: redis}
+  postgres: {kind: StatefulSet, name: postgres}
+  mock-api: {kind: Deployment, name: mock-api}
+
+nodes:
+  client: {kind: external, injectable: false}
+  n8n-main: {kind: app}
+  n8n-worker: {kind: app}
+  redis: {kind: queue}
+  postgres: {kind: db, stateful: true}
+  mock-api: {kind: mock}
+  prometheus: {kind: obs, injectable: false}
+  grafana: {kind: obs, injectable: false}
+
+edges:
+  - {from: client, to: n8n-main, flow: webhook, mode: sync, strength: hard}
+  - {from: n8n-main, to: redis, flow: enqueue, mode: async, strength: hard, known_timeout_s: 10}
+  - {from: n8n-worker, to: redis, flow: dequeue, mode: async, strength: hard}
+  - {from: n8n-main, to: n8n-worker, flow: job-execution, mode: async, strength: hard, logical: true, via: redis}
+  - {from: n8n-main, to: postgres, flow: query, mode: sync, strength: hard}
+  - {from: n8n-worker, to: postgres, flow: insert, mode: sync, strength: hard}
+  - {from: n8n-worker, to: mock-api, flow: http, mode: sync, strength: hard, known_timeout_s: 30}
+
+workflows:
+  W1:
+    path: [client, n8n-main, redis, n8n-worker, mock-api, postgres]
+    client_visible_until: postgres
+  W2:
+    path: [client, n8n-main, redis, n8n-worker, mock-api, postgres]
+    client_visible_until: redis
+  W3:
+    path: [n8n-main, redis, n8n-worker, postgres]
+    client_visible_until: null

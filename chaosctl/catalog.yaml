@@ -1,0 +1,79 @@
+# Failure catalog (BUILD_PLAN section 8). Agents pick (target, fault, rung) from here;
+# the harness renders CRs only from these templates. Placeholders: {name} {namespace}
+# {run_id} {selector} {grace_period} {duration}.
+targets:   # graph node -> pod label selector (namespace is always n8n-chaos)
+  n8n-worker: {app.kubernetes.io/name: n8n, app.kubernetes.io/instance: n8n, app.kubernetes.io/component: worker}
+  n8n-main: {app.kubernetes.io/name: n8n, app.kubernetes.io/instance: n8n, app.kubernetes.io/component: main}
+  redis: {app: redis}
+  postgres: {app: postgres}
+  mock-api: {app: mock-api}
+
+templates:
+  pod_kill: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      action: pod-kill
+      mode: one
+      gracePeriod: {grace_period}
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+  pod_failure: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: {name: "{name}", namespace: "{namespace}"}
+    spec:
+      action: pod-failure
+      mode: one
+      duration: "{duration}s"
+      selector:
+        namespaces: ["{namespace}"]
+        labelSelectors: {selector}
+
+faults:
+  worker_pod_kill:
+    chaos_kind: PodChaos
+    template: pod_kill
+    applies_to: {nodes: [n8n-worker]}
+    enabled: true
+    tier: 1
+    reversible: false
+    recovery_deadline_s: 120
+    max_total_s: 180
+    ladder:
+      ungraceful: {grace_period: 0}
+  redis_pod_kill:
+    chaos_kind: PodChaos
+    template: pod_kill
+    applies_to: {nodes: [redis]}
+    enabled: true
+    tier: 3
+    reversible: false
+    recovery_deadline_s: 120
+    max_total_s: 180
+    ladder:
+      ungraceful: {grace_period: 0}
+  pod_failure:
+    chaos_kind: PodChaos
+    template: pod_failure
+    applies_to: {nodes: [n8n-worker, mock-api, postgres]}
+    enabled: false
+    test_only: true          # kill-switch test variant today; experiment on Day 2
+    tier: 1
+    reversible: true
+    max_duration_s: 60
+    recovery_deadline_s: 120
+    ladder:
+      d60: {duration: 60}
+  worker_graceful_kill:
+    chaos_kind: PodChaos
+    template: pod_kill
+    applies_to: {nodes: [n8n-worker]}
+    enabled: false
+    tier: 1
+    reversible: false
+    recovery_deadline_s: 120
+    ladder:
+      graceful: {grace_period: 30}

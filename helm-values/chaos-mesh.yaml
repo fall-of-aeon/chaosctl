@@ -1,0 +1,13 @@
+# Chaos Mesh 2.8.4 on Kind (containerd). Only annotated namespaces are injectable.
+controllerManager:
+  replicaCount: 1
+  enableFilterNamespace: true
+  leaderElection:
+    enabled: false
+chaosDaemon:
+  runtime: containerd
+  socketPath: /run/containerd/containerd.sock
+dashboard:
+  securityMode: false   # local Kind only, reached via port-forward
+dnsServer:
+  create: false

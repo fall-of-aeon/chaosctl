@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+state/*
+!state/.gitkeep
+reports/*
+!reports/.gitkeep
+KILL
+graph.json
+graph.mmd
+.DS_Store
