@@ -581,7 +581,7 @@ class Hub(threading.Thread):
             own.append({"kind": "warning", "component": "dashboard", "reason": "map from graph.json: live cluster graph unavailable", "ts": t})
         alerts = model.alert_banner(self._every("degraded", 5, t, lambda: self.src.degraded(t)) + own)
         return {
-            "alerts": alerts, "collector_error": None,
+            "alerts": alerts, "collector_error": None, "llm_settings": getattr(self, "llm_settings", None),
             "now": t, "collected_at": t, "wall": time.time(), "mode": self.src.mode, "stale_after_s": STALE_AFTER_S,
             "replay": {"run_id": self.src.run_id, "start": self.src.start, "end": self.src.end} if self.src.mode == "replay" else None,
             "sources": srcs, "run_id": ctx.get("run_id"),

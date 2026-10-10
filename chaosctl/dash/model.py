@@ -567,3 +567,164 @@ def alert_banner(items: list[dict]) -> list[dict]:
         g["count"] += 1
         g["last_ts"] = max(g["last_ts"], e.get("ts") or 0)
     return sorted(groups.values(), key=lambda g: -g["last_ts"])
+
+
+# ------------------------------------------------------------------ Story tab: words
+
+def fallback_badge(src: dict) -> str:
+    """Readable reason a deterministic fallback was used (shown on the page, never hidden)."""
+    if src.get("kind") != "fallback":
+        return src.get("text", "")
+    why = str(src.get("why") or "")
+    table = [("MISTRAL_MODEL not set", "Mistral model not configured (MISTRAL_MODEL not set)"),
+             ("no API key", "no Mistral API key"), ("MISTRAL_API_KEY", "no Mistral API key"),
+             ("429", "Mistral rate limit reached"), ("RESOURCE_EXHAUSTED", "LLM quota exhausted"),
+             ("imeout", "Mistral timed out"), ("invalid", "LLM answer failed validation"),
+             ("budget", "LLM call budget used up"), ("disabled", "LLM switched off for this run")]
+    for key, text in table:
+        if key in why:
+            return f"Rule-based fallback: {text}"
+    return f"Rule-based fallback: {why or 'Mistral unavailable'}"
+
+
+def tier_rule_text(tier: int | None, passed: dict | None) -> str:
+    if tier == 3:
+        return ("Tier 3 (outage of a single point of failure) is only allowed after a tier 1 experiment passed"
+                + (f": {passed.get('run_id')} {passed.get('fault', '').replace('_', ' ')} passed." if passed else "; none had."))
+    if tier == 2:
+        return "Tier 2 (degrades a shared dependency): reversible, capped duration."
+    return "Tier 1 (one replaceable or client-tolerated component): always allowed first."
+
+
+def cites_in(text: str) -> list[str]:
+    """Evidence ids cited inside Agent 2's text, e.g. (ev:events), ev:logs:redis-6c47..."""
+    return sorted(set(re.findall(r"\bev:[\w:.\-]+[\w]", text or "")))
+
+
+_VERBS = {
+    "pod_kill": "killed the {t} pod", "pod_failure": "made the {t} pod fail", "network_delay": "slowed network traffic to {t}",
+    "network_partition": "cut {t} off from {peer}", "http_replace_code": "made {t} answer with HTTP errors",
+    "http_abort": "made {t} drop requests", "http_delay": "delayed {t}'s answers",
+}
+
+
+def fault_phrase(s: dict) -> str:
+    """'killed the redis pod', from the catalog template of the fault."""
+    from chaosctl.dash.sources import load_catalog
+    entry = load_catalog()["faults"].get(s.get("fault"), {})
+    peer = (entry.get("params") or {}).get("peer", "")
+    tmpl = entry.get("template") or ""
+    if "container" in (s.get("fault") or ""):
+        return f"killed a container in {s['target']}"
+    if s.get("fault") == "traffic_spike":
+        return f"sent a traffic spike to {s['target']}"
+    if tmpl in _VERBS:
+        return _VERBS[tmpl].format(t=s["target"], peer=peer)
+    return f"injected {(s.get('fault') or 'a fault').replace('_', ' ')} into {s['target']}"
+
+
+def narration(s: dict, diag: dict | None, fix: dict | None, report: dict | None = None) -> dict:
+    """One plain sentence per act, built only from recorded numbers (read aloud in the demo)."""
+    b = s.get("baseline") or {}
+    out = {}
+    if b.get("w1_success") is not None:
+        out["start"] = (f"The system was healthy: {b['w1_success']:.0%} of sync orders succeeded, p95 "
+                        f"{(b.get('w1_p95_ms') or 0) / 1000:.1f} s, about {b.get('wait_mean') or 0:.0f} jobs waiting.")
+    else:
+        out["start"] = "No baseline was recorded for this run."
+    n = (s.get("in_flight") or {}).get("total")
+    out["inject"] = f"Agent 1 {fault_phrase(s)}" + (f" while {n} orders were in flight." if n else ".")
+    fr = {r["fate"]: r["count"] for r in (s.get("fates") or {}).get("rows", [])}
+    total = (s.get("fates") or {}).get("total") or 0
+    lost = fr.get("lost_silently", 0) + fr.get("lost_visible", 0)
+    if s.get("abort"):
+        out["impact"] = f"The safety controller stopped it at T+{s['abort']['rel_s']:.0f} s: {s['abort']['text']}."
+    elif s.get("status") == "skipped":
+        out["impact"] = "Nothing was injected: the pre-flight checks refused."
+    elif s.get("recovery_time_s") is None:
+        out["impact"] = "The service did not get back to baseline within the observation window."
+    elif total and not lost and not fr.get("duplicated"):
+        out["impact"] = f"All {total} in-flight orders completed exactly once; service was back to normal in {s['recovery_time_s']} s."
+    else:
+        out["impact"] = (f"{lost} of {total} in-flight orders were lost" + (f", {fr['duplicated']} duplicated" if fr.get("duplicated") else "")
+                         + f"; service was back to normal in {s['recovery_time_s']} s.")
+    if diag:
+        rc = (diag.get("root_cause") or "").replace("**", "").replace("`", "").split(". ")[0].rstrip(".")
+        out["diagnose"] = f"Agent 2, not told what was injected, concluded: {rc}."
+    else:
+        out["diagnose"] = "Agent 2 has not diagnosed this run yet."
+    if fix and fix.get("fixes"):
+        out["fix"] = f"Fix: {fix['fixes'][0].get('action')}."
+    else:
+        out["fix"] = "No fix summary yet."
+    if report and report.get("available"):
+        out["report"] = f"Resilience score {report['overall']['score']} / 100: {report['overall']['verdict']}."
+    else:
+        out["report"] = "No resilience report yet."
+    return out
+
+
+# Claims a hypothesis can make, each with the measurement that settles it. A claim is only judged when the
+# hypothesis text mentions it; a negated claim ("no job is lost") is judged the other way round.
+_CLAIMS = [
+    ("lost", r"\blost\b|\blose\b", lambda m: m["lost"] > 0, "orders lost", "no orders lost"),
+    ("duplicates", r"duplicat|run twice|re-?run", lambda m: m["dup"] > 0, "orders duplicated", "no orders duplicated"),
+    ("w1_fail", r"W1 .*(fail|error|hang)|requests? (fail|get errors)", lambda m: m["w1_err"] > 0,
+     "sync clients saw errors", "sync clients saw no errors"),
+    ("w2_200", r"W2 .*200|keeps? returning 200|still returns? 200", lambda m: m["w2_ok"],
+     "async clients still got 200", "async clients did not get 200"),
+    ("latency", r"p95 rises|latency rise|slow", lambda m: m["slow"], "latency rose (peak p95 >= 1.5x baseline)",
+     "latency stayed normal"),
+    ("restart", r"restart", lambda m: m["restarts"] > 0, "a process restarted", "no process restarted"),
+]
+
+
+def judge_hypothesis(text: str | None, s: dict) -> dict:
+    """confirmed / refuted / partly / not judged, from the fate table, restarts and peak latency.
+    Each claim is negated only by a 'no/not/without/never' in its own clause (text between , ; . and the claim)."""
+    if not text or s.get("status") in (None, "running", "skipped"):
+        return {"verdict": "not judged", "claims": []}
+    fr = {r["fate"]: r["count"] for r in (s.get("fates") or {}).get("rows", [])}
+    peak = s.get("peak_p95") or {}
+    m = {"lost": fr.get("lost_silently", 0) + fr.get("lost_visible", 0), "dup": fr.get("duplicated", 0),
+         "w1_err": fr.get("lost_visible", 0) + fr.get("phantom_success", 0),
+         "w2_ok": fr.get("lost_silently", 0) > 0 or (s.get("fates") or {}).get("total", 0) > 0,
+         "slow": (peak.get("ratio") or 0) >= 1.5,
+         "restarts": sum(v for v in (s.get("restarts_delta") or {}).values() if v and v > 0)}
+    claims = []
+    for key, pat, test, pos, neg in _CLAIMS:
+        hit = re.search(pat, text, re.I)
+        if not hit:
+            continue
+        clause = re.split(r"[,;.]", text[:hit.start()])[-1].lower()
+        negated = bool(re.search(r"\b(no|not|without|never)\b", clause))
+        hedged = bool(re.search(r"\b(may|might|could|possibly)\b", clause))
+        observed = bool(test(m))
+        claims.append({"claim": neg if negated else pos, "held": observed != negated, "hedged": hedged})
+    if not claims:
+        return {"verdict": "not judged", "claims": []}
+    firm = [c for c in claims if not c["hedged"]] or claims
+    held = sum(c["held"] for c in firm)
+    verdict = "confirmed" if held == len(firm) else "refuted" if held == 0 else "partly"
+    return {"verdict": verdict, "claims": claims}
+
+
+def compare_verdict(a: dict, b: dict) -> str:
+    """One line, e.g. 'After: recovery 2.4x faster, no backlog, 1 order lost.'"""
+    parts = []
+    ra, rb = a.get("recovery_time_s"), b.get("recovery_time_s")
+    if ra and rb:
+        parts.append(f"recovery {ra / rb:.1f}x faster" if rb < ra else f"recovery {rb / ra:.1f}x slower")
+    elif rb and not ra:
+        parts.append(f"recovered in {rb} s (before: never)")
+    elif ra and not rb:
+        parts.append(f"did not recover (before: {ra} s)")
+    if bool(a.get("abort")) != bool(b.get("abort")):
+        parts.append("no auto-stop" if a.get("abort") else "auto-stopped")
+
+    def lost(s):
+        fr = {r["fate"]: r["count"] for r in (s.get("fates") or {}).get("rows", [])}
+        return fr.get("lost_silently", 0) + fr.get("lost_visible", 0) + fr.get("duplicated", 0)
+    lb = lost(b)
+    parts.append("no orders lost" if lb == 0 else f"{lb} order{'s' if lb != 1 else ''} lost or duplicated")
+    return "After: " + ", ".join(parts) + "."

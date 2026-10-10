@@ -436,6 +436,33 @@ def diagnose(run: str = typer.Option(None, help="run id (default: newest)"), exp
                       f"blind root cause {shown}"
                       + ("" if out["llm_used"] else " [bold red](graded the TEMPLATE diagnosis, not the LLM: does not "
                                                     "count as an Agent 2 result)[/bold red]"))
+    _write_fix_summary(rdir, exp, out, llm)
+
+
+def _write_fix_summary(rdir: Path, exp: str, diag: dict, use_llm: bool) -> dict:
+    """Fix summary card (chaosctl/fix_summary.py): blind, playbook-only fixes, stored for the dashboard."""
+    from chaosctl import fix_summary
+    from chaosctl.journal import Journal
+
+    out = fix_summary.build(diag, use_llm=use_llm, journal=Journal(rdir / "journal.jsonl"))
+    path = fix_summary.write(rdir, exp, out)
+    color = "green" if out["source"].startswith("llm") else "bold red"
+    console.print(f"\n[bold]6. Fix summary[/bold] [{color}]({out['source']})[/{color}] -> {path.relative_to(ROOT)}")
+    console.print(f"   what broke: {out['what_broke']}\n   why: {out['why']}")
+    for i, f in enumerate(out["fixes"], 1):
+        console.print(f"   {i}. {f['action']} [dim]({f['playbook_id']}; verify: {f['verify']})[/dim]")
+    return out
+
+
+@app.command("fix-summary")
+def fix_summary_cmd(run: str = typer.Option(..., help="run id"), exp: str = "exp-01",
+                    llm: bool = typer.Option(True, "--llm/--no-llm")):
+    """Regenerate the fix summary of a diagnosed experiment (what broke, why, fix, verify, rollback)."""
+    rdir = ROOT / "reports" / run
+    diag_p = rdir / "evidence" / f"{exp}.diagnosis.json"
+    if not diag_p.exists():
+        raise typer.BadParameter(f"{diag_p} not found: run `chaosctl diagnose --run {run} --exp {exp}` first")
+    _write_fix_summary(rdir, exp, json.loads(diag_p.read_text()), llm)
 
 
 @app.command()
