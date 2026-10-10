@@ -94,7 +94,9 @@ def test_guard_reorders_llm_plan_redis_first():
 ])
 def test_invalid_llm_plans_fall_back(bad):
     out = run(call=llm_plan([{**ITEM, "id": "exp-01", **bad}]))
-    assert out["source"] == "fallback:invalid_plan"
+    # values outside the candidates are refused by the enum schema (invalid JSON), wrong combinations or
+    # citations by validate(); either way: the deterministic plan, never the invalid one
+    assert out["source"] == "fallback:invalid_plan" or "invalid JSON" in out["source"]
     assert [e.fault for e in out["plan"].experiments] == ["worker_pod_kill", "redis_pod_kill"]
 
 
@@ -120,3 +122,20 @@ def test_guard_cannot_loosen_thresholds():
     assert th.queue_waiting == 500 and th.w1_error_rate == 0.5
     th2 = inj.thresholds_for("worker_pod_kill", CAT, POLICY, overrides={"queue_waiting": 1})
     assert th2.queue_waiting == 1
+
+
+def test_llm_schema_only_allows_candidate_values():
+    sc = [c for c in inj.score_candidates(build(), CAT, []) if c["fault"] == "mockapi_http_500"]
+    props = inj.constrained_plan_model(sc, 6).model_json_schema()
+    item = props["$defs"]["PlanItem"]["properties"]
+    assert item["rung"]["enum"] == ["code500_d30", "code503_d60"] and item["fault"]["const"] == "mockapi_http_500"
+    assert props["properties"]["experiments"]["maxItems"] == 6
+
+
+def test_same_fault_twice_on_one_target_is_rejected():
+    # seen live: ministral planned mockapi_http_500 code500_d30, code503_d60, code500_d30
+    item = {**ITEM, "fault": "worker_pod_kill", "target": "node:n8n-worker", "rung": "ungraceful",
+            "reason": "node:n8n-worker", "cites": ["node:n8n-worker"]}
+    out = run(call=llm_plan([{**item, "id": "exp-01"}, {**item, "id": "exp-02"}]))
+    assert out["source"] == "fallback:invalid_plan"
+    assert any("already planned as exp-01" in e for e in out["errors"])
