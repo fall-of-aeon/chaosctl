@@ -18,7 +18,7 @@ import httpx
 N8N_URL = "http://127.0.0.1:15678"
 WEBHOOK_PATHS = {"W1": "/webhook/chaos-w1", "W2": "/webhook/chaos-w2"}
 CLIENT_TIMEOUT_S = 60.0
-PROFILES = {"off": 0.0, "steady": 3.0, "spike": 9.0}
+PROFILES = {"off": 0.0, "steady": 2.0, "spike": 6.0}  # 3 req/s oversubscribed one worker (T4 calibration)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (

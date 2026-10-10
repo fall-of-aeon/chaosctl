@@ -25,3 +25,27 @@
 ## T2/T3/T4b/T5/T6 code (written ahead of the cluster, against fixtures)
 - graph.py + overlay.yaml (T2), catalog.yaml + chaos/chaosmesh.py (T3), safety.py (T4b), loadgen.py/probes.py (T4a), agents/injection.py (T5/T6), runner.py, cli.py. 55 unit tests pass. Live acceptance pending on the n8n stack.
 - Decision: the injection agent's guard re-checks the tier rule at run time (`runtime_guard`), so E2 is only approved after E1 actually passed.
+
+## T1b (2026-10-10) DONE
+- `chaosctl up` + `bootstrap`: postgres, redis (no persistence), mock-api, n8n 2.42.4 queue mode (1 worker). W1 200 + row, W2 200 + row later, W3 heartbeat rows. n8n 2.x uses `n8n publish:workflow --id` (not `update:workflow --active`). Bull prefix `bull` confirmed (`bull:jobs:*`).
+- Docker Desktop crashed once (daemon gone) during the first deploy on the 8 GB host; restarted, cluster recovered, redeploy succeeded. Memory after deploy ~4.1/5.8 GiB.
+
+## T2 live: graph from the real cluster finds n8n-main/worker -> redis/postgres edges via ConfigMap env (source k8s_env+overlay).
+
+## T4a baseline (2026-10-10)
+- 3 req/s oversubscribed one worker (active ~10 = concurrency, queue trend +37). Steady lowered to **2 req/s**: W1 100 % success, p50 4.1 s, p95 4.7 s; W2 p95 0.1 s; queue flat (mean 0.01), ~8 active. Default abort thresholds kept (p95 20 s is ~4x baseline).
+
+## T4b kill switch (2026-10-10): 7/9 within the 60 s criterion
+- Chaos resource deleted within 1-3 s in all 9 runs (CLI, ./KILL, SIGINT x3). Two runs failed the 60 s worker-Ready criterion (59 s, 105 s): nine consecutive pod-failures on the same pod pushed the worker into CrashLoopBackOff ("exec: n8n not found" while the pause image was swapped in). Finding: repeated faults on one pod inflate recovery via kubelet back-off. Restored with a rollout restart.
+
+## T5/T6 live: `plan --dry-run` with Gemini returns a valid plan citing real graph ids; guard orders E1 before E2 and gates E2 on a passed E1.
+
+## T7 E1 worker kill (run r1010-155337)
+- Injected with 5 W1 + 5 W2 in flight, 8 active. Active dropped to 0, wait rose 0 -> ~52, W1 p95 4.7 s -> 29.8 s, W2 kept returning 200 (silent). Replacement worker Ready at +34 s. **All 10 in-flight requests completed exactly once** (no loss, no duplicates; hypothesis of duplicates refuted). Backlog (~50) did not drain under continued 2 req/s load within 180 s: no headroom with one worker.
+- Bug found and fixed: observe window and safety cap both 180 s raced, labelling the run "aborted"; observe now ends 5 s before the cap.
+- Warm-up raised from 10 s to 60 s per BUILD_PLAN 11.1.
+
+## Auto-stop rehearsal (run r1010-155845): E1 with queue_waiting abort = 20
+- Controller tripped on "queue_waiting 22 > 20" within seconds; load stopped, chaos deleted, watchdog confirmed all workloads Ready without manual action. Fates: 6 completed once, 1 lost silently (W2), 1 lost visibly (W1). Cause not yet established.
+
+## Live dashboard: `chaosctl dashboard` -> http://127.0.0.1:8787 (service tiles, W1 p95 vs baseline, throughput W1 vs W2, queue waiting vs active, event markers, experiment panel, fate table).

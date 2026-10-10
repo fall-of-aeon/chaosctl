@@ -14,6 +14,7 @@ experiments:
   redis_pod_kill: {recovery_deadline_s: 120}
   pod_failure: {recovery_deadline_s: 120}
 fate_wait_s: 180
+warmup_s: 60            # steady load before injection (BUILD_PLAN 11.1)
 rules:
   never_target_outside_namespace: n8n-chaos
   tier3_requires_prior_tier1_pass: true

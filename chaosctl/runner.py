@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import signal
 import statistics
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -88,9 +89,16 @@ class Runner:
         self.redis = RedisProbe()
         self.pg = PgProbe()
         self.loadgen = loadgen or LoadGen(LOADGEN_DB)
-        self.stats = LoadStats(LOADGEN_DB)
+        self._local = threading.local()
         self.baseline = json.loads(BASELINE_PATH.read_text()) if BASELINE_PATH.exists() else None
         self.ctl: SafetyController | None = None
+
+    @property
+    def stats(self) -> LoadStats:
+        """One SQLite connection per thread (the safety thread samples concurrently)."""
+        if not hasattr(self._local, "stats"):
+            self._local.stats = LoadStats(LOADGEN_DB)
+        return self._local.stats
 
     # -- sampling (used by the safety thread and by observe)
     def sample(self, window_s: float = 5.0) -> dict:
@@ -194,9 +202,13 @@ class Runner:
             return {**res, "status": "skipped", "skip_reason": "preflight", "problems": problems}
         ctl.transition(State.PREFLIGHT_OK)
 
+        warmup = self.policy.get("warmup_s", 60)  # BUILD_PLAN 11.1: steady load >= 60 s before injection
         if not self.loadgen.running:
             self.loadgen.start()
-            time.sleep(10)
+            self.journal.write({"event": "warmup", "seconds": warmup})
+            t0 = time.time()
+            while time.time() - t0 < warmup and not ctl.aborted:
+                time.sleep(1)
         ok, base_w1 = self.baseline_stable()
         if not ok:
             ctl.transition(State.DONE)
@@ -299,7 +311,8 @@ class Runner:
                     "t_slis_recovered": None, "t_queue_drained": None}
         healthy_since = None
         saw_symptom = False
-        while time.time() - t_inject < th.max_total_s:
+        # stop observing before the safety cap so max_total_s only ever fires on a runaway run
+        while time.time() - t_inject < th.max_total_s - 5:
             if ctl.aborted:
                 break
             now = time.time()
@@ -314,6 +327,7 @@ class Runner:
             symptom = ((w1["error_rate"] or 0) > 0 or (w1["p95_ms"] or 0) > 1.5 * b_p95
                        or not q.get("reachable") or q.get("wait", 0) > b_wait + 5
                        or any(not v["ready"] for v in pods.values()))
+            self._live(now - t_inject, w1, s["w2"], q, pods, target)
             if symptom and tl["t_first_symptom"] is None:
                 tl["t_first_symptom"] = now
             saw_symptom = saw_symptom or symptom
@@ -333,6 +347,18 @@ class Runner:
             time.sleep(1)
         tl["saw_symptom"] = saw_symptom
         return tl
+
+    def _live(self, t: float, w1: dict, w2: dict, q: dict, pods: dict, target: str) -> None:
+        """One line per second so the impact is visible while it happens."""
+        from rich.console import Console
+        con = getattr(self, "_con", None) or Console(highlight=False)
+        self._con = con
+        err = w1["n"] - w1["ok"]
+        p95 = f"{w1['p95_ms'] / 1000:.1f}s" if w1["p95_ms"] else "  -  "
+        qtxt = f"wait {q['wait']:>3} active {q['active']:>2}" if q.get("reachable") else "[red]REDIS DOWN       [/red]"
+        pod_txt = " ".join(f"[{'green' if v['ready'] else 'red'}]{n}[/]" for n, v in pods.items())
+        con.print(f"t+{t:5.1f}s  W1 ok {w1['ok']:>2} [{'red' if err else 'green'}]err {err:>2}[/] p95 {p95:>6} | "
+                  f"W2 ok {w2['ok']:>2} | {qtxt} | {pod_txt}")
 
     def _write_evidence(self, res: dict, samples: list[dict], t_inject: float) -> None:
         """Evidence bundle for the blind diagnosis agent: no plan/chaos spec inside."""

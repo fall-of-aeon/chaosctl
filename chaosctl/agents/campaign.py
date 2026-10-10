@@ -89,6 +89,8 @@ def build_campaign(runner, graph_loader, policy: dict, journal: Journal, approve
         stop = None
         if runner.ctl and runner.ctl.abort_reason == "kill_switch":
             stop = "kill_switch"
+        elif res["status"] == "aborted":
+            stop = f"aborted: {res.get('abort_reason')}"
         if res.get("watchdog", {}).get("recovered") is False:
             stop = "rollback_failed"
         return {"history": hist, "stop_reason": stop}

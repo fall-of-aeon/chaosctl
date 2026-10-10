@@ -298,5 +298,13 @@ def killswitch_test(via: list[str] = typer.Option(["cli", "file", "signal"]), re
     console.print(f"[bold]{sum(r['pass'] for r in results)}/{len(results)} passed[/bold]")
 
 
+@app.command()
+def dashboard(port: int = 8787):
+    """Live impact dashboard (open http://127.0.0.1:8787 next to the terminal)."""
+    from chaosctl.dashboard import serve
+
+    serve(port)
+
+
 if __name__ == "__main__":
     app()

@@ -30,7 +30,7 @@ class RedisProbe:
 
         self.prefix = prefix
         self.r = redis.Redis(host=host, port=port, socket_timeout=1.0, socket_connect_timeout=1.0,
-                             retry_on_timeout=False, health_check_interval=0)
+                             health_check_interval=0)
 
     def sample(self) -> dict:
         try:
