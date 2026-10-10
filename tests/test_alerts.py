@@ -56,8 +56,8 @@ def test_invalid_llm_plan_is_alerted():
         "rung": "x", "start_when": "in_flight>=3", "cooldown_s": 60, "reason": "x", "cites": ["node:redis"],
         "hypothesis": "h"}]})  # noqa: E731
     out = plan(bad)
-    assert out["source"] == "fallback:invalid_plan"
-    assert any("failed validation" in e["reason"] for e in alerts.seen())
+    assert out["source"].startswith("fallback:") and "invalid JSON" in out["source"]   # refused by the enum schema
+    assert any(e["kind"] == "llm_fallback" and "invalid JSON" in e["reason"] for e in alerts.seen())
 
 
 def test_require_llm_turns_fallback_into_failure(monkeypatch):

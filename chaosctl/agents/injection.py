@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from chaosctl import alerts, llm
 from chaosctl.fault_kb import load_kb
@@ -49,6 +49,19 @@ class GuardVerdict(BaseModel):
     abort: dict[str, Any]
     rationale: str
     order_after: str | None = None
+
+
+def constrained_plan_model(scored: list[dict], max_n: int) -> type[BaseModel]:
+    """LLMPlan whose JSON schema only allows the candidates' values (enums) and at most max_n experiments, so
+    Mistral's strict json_schema mode cannot return a fault, target or rung that does not exist. A wrong
+    combination of allowed values is still possible and is caught by validate()."""
+    def lit(values):
+        return Literal[tuple(sorted(values))]  # noqa: PYI - dynamic Literal
+    item = create_model("PlanItem", __base__=PlanItem,
+                        fault=(lit({c["fault"] for c in scored}), ...),
+                        target=(lit({c["target"] for c in scored}), Field(description="node id, e.g. node:redis")),
+                        rung=(lit({c["rung"] for c in scored}), ...))
+    return create_model("LLMPlan", experiments=(list[item], Field(min_length=1, max_length=max_n)))
 
 
 # ------------------------------------------------------------ scoring
@@ -113,11 +126,15 @@ def validate(plan: LLMPlan, graph: Graph, scored: list[dict]) -> list[str]:
     valid = {(c["target"], c["fault"], c["rung"]) for c in scored}
     if not plan.experiments:
         errs.append("empty plan")
-    seen_ids = set()
+    seen_ids, seen_pairs = set(), {}
     for it in plan.experiments:
         if it.id in seen_ids:
             errs.append(f"{it.id}: duplicate id")
         seen_ids.add(it.id)
+        pair = (it.target, it.fault)   # one rung per (target, fault): the same fault twice teaches nothing new
+        if pair in seen_pairs:
+            errs.append(f"{it.id}: {it.fault} on {it.target} is already planned as {seen_pairs[pair]}")
+        seen_pairs.setdefault(pair, it.id)
         if (it.target, it.fault, it.rung) not in valid:
             errs.append(f"{it.id}: ({it.target}, {it.fault}, {it.rung}) is not an enabled catalog candidate")
         if not START_WHEN.match(it.start_when.replace(" ", "")):
@@ -302,7 +319,9 @@ def build_injection_agent(journal: Journal | None = None, llm_call=None):
         prompt = build_prompt(s["graph"], s["scored"], s.get("history", []), s["policy"], s.get("feedback"))
         meta: dict = {}
         try:
-            plan = llm.generate_json("injection_select", prompt, LLMPlan, journal=j, call=llm_call, meta=meta)
+            schema = constrained_plan_model(s["scored"], max_plan(s["policy"]))
+            got = llm.generate_json("injection_select", prompt, schema, journal=j, call=llm_call, meta=meta)
+            plan = LLMPlan.model_validate(got.model_dump())
             return {"plan": plan, "source": llm_source(meta)}
         except llm.LLMUnavailable as exc:
             j.write({"event": "agent1_fallback", "why": str(exc)})
