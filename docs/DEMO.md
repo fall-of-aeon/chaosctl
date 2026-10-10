@@ -1,17 +1,23 @@
-# Demo runbook (judges, <= 3 min)
+# Demo runbook (judges, <= 3 min on video, about 6 min live)
 
-Pre-demo (not on camera, ~10 min before): cluster up, stack up, `chaosctl bootstrap`, `chaosctl baseline --duration 120`,
-`rm -f KILL`, `chaosctl recover --ack`. Open Grafana (`kubectl -n monitoring port-forward svc/monitoring-grafana 13000:80`)
-and the Chaos Mesh dashboard (`kubectl -n chaos-mesh port-forward svc/chaos-dashboard 2333:2333`).
+**Before (off camera, about 10 min):**
+1. Cluster and app are up (README Part 3).
+2. Run `rm -f KILL && uv run chaosctl recover --ack` (clean state).
+3. Run `uv run chaosctl baseline --duration 120`.
+4. In terminal 1, run `uv run chaosctl dashboard` and open http://127.0.0.1:8787.
+5. Log in to the n8n UI (http://127.0.0.1:15678) to show the two workflows.
+6. Check the Gemini quota (README 3.5). If it is exhausted, the AI panels show the deterministic fallback.
 
-| # | Time | Show | Command | What to say |
+| # | Time | Show | Command (terminal 2) | What to say |
 |---|---|---|---|---|
-| 1 | 25 s | App + dependency graph | `uv run chaosctl graph` (and `graph.mmd` rendered) | Discovered from Kubernetes + declared overlay. Every node and edge has an ID. Redis and Postgres are the most critical single points of failure; blast radius = everything that depends on them. |
-| 2 | 15 s | Baseline | `cat state/baseline.json` / Grafana | 2 req/s steady: W1 100 % success, p95 about 4.7 s, queue flat, about 8 executions always in flight. |
-| 3 | 20 s | AI plan | `uv run chaosctl plan --dry-run` | Gemini picks and explains, citing graph IDs; a validator rejects anything off-catalog; the deterministic guard orders E1 before E2 (tier rule) and sets abort limits. If Gemini is down, a deterministic plan is used. |
-| 4 | 50 s | E1 worker kill during execution | `uv run chaosctl run --exp E1` | Injection waits until requests are in flight. Show: in-flight set, W1 errors vs W2 still 200, queue climbing, pod replaced, fate table, recovery time. |
-| 5 | 40 s | E2 Redis restart | `uv run chaosctl run --exp E2` | Prediction vs outcome; queue state lost; fate table (lost silently / lost visibly / phantom). |
-| 6 | 10 s | Kill switch | `reports/killswitch-test.json` or live `touch KILL` during a run | Three ways (CLI, file, SIGINT), each tested three times; reversible faults restore immediately. |
-| 7 | 20 s | Day 2: findings | `uv run chaosctl report` | Blind diagnosis, ranked fixes, resilience score. |
+| 1 | 25 s | System map on the dashboard + `chaosctl graph` | `uv run chaosctl graph` | Discovered from Kubernetes + declared overlay. An order flows client → n8n-main → Redis → worker → mock-api → Postgres. Redis and Postgres are single points of failure; blast radius = everything that depends on them. |
+| 2 | 15 s | Step bar "Baseline" | (part of the demo run) | 2 orders/s: W1 100 % success, p95 about 5 s, queue flat. |
+| 3 | 20 s | Agent 1 panel (menu, ✅ pick, why, prediction, safety limits) | `uv run chaosctl demo --queue-abort 20` | Agent 1 scores every allowed experiment and picks one, citing the map. The guard sets limits and only allows Redis after the worker test passed. |
+| 4 | 50 s | Charts + service tiles + markers | (running) | One pod killed, once, while orders are in flight. Latency up, queue piling up, async customers still told OK. The safety controller stops it if a limit is crossed. |
+| 5 | 20 s | Fate table + timeline | (running) | What happened to every order in flight; time to recover. |
+| 6 | 30 s | Agent 2 panel + terminal reasoning | (runs at the end of `demo`) | Not told what we broke; reasons step by step; root cause; fixes from the vetted playbook, advisory only. |
+| 7 | 15 s | "Ask Agent 2" chat | click a suggested question | Answers grounded in our recorded evidence, with sources. |
+| 8 | 10 s | Kill switch | `reports/killswitch-test.json`, or `touch KILL` during a run | Three ways (CLI, file, Ctrl-C), each tested three times. |
 
-Fallback if live injection misbehaves on stage: show the recorded run in `reports/<run-id>/` (journal, results, evidence).
+Recorded results to fall back on: `reports/<run-id>/` (journal, results, evidence, diagnosis); the dashboard shows the newest run.
+Findings report / resilience score (`chaosctl report`) is Day-2 work and does not exist yet.

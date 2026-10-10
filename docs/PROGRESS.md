@@ -73,3 +73,14 @@
 
 Key findings: (1) a single worker has no headroom: a kill leaves a permanent backlog; (2) W2 async clients keep getting 200 OK while nothing is processed (silent failure, n8n-main stays Ready); (3) a 1 s Redis restart cascades into ~60 s of total outage because n8n processes exit; (4) killed in-flight work is retried, but clients get errors although the order was written (phantom success).
 Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-call engineer would; Chaos Mesh objects/events are stripped.
+
+## Later the same day
+- Workflows simplified: W3 heartbeat and the W1/W2 "validate" step removed (unused); re-imported, W1/W2 smoke-tested OK.
+- Dashboard: step bar, system map (target + blast radius), Agent 1 menu; `chaosctl demo` (one experiment + Agent 2).
+- r1010-214152 (`chaosctl demo --queue-abort 20`, Agent 1 picked E1, 2 workers): passed, no visible symptom, SLIs back
+  in 33.2 s; 8 in flight: 7 completed once, 1 W2 order lost silently. Agent 2: correct, fix graceful shutdown.
+- Audit: the first diagnosis (r1010-155337) predated the blindness fix (its reasoning cited Chaos Mesh events). Re-run
+  blind: still correct (top fix: 2 workers), but from the deterministic fallback because Gemini returned
+  429 RESOURCE_EXHAUSTED (quota) and the fallback model 504. Blind diagnoses: 4 of 4 correct.
+- README rewritten as onboarding guide and audited against the code; DEMO.md and JUDGES_GUIDE.md updated
+  (no Grafana, no `chaosctl report` yet). Repo moved to github.com/fall-of-aeon/chaosctl.

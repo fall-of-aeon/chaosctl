@@ -150,13 +150,16 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
    - (c) A validator rejects anything not in the catalog or citing unknown IDs. On rejection, a deterministic plan is used.
    - (d) The **policy guard** computes the blast radius, sets abort limits (stricter only), and enforces the risk-tier
      rule: **a tier-3 experiment (Redis) only after a tier-1 experiment (worker) has passed.**
-3. **Pre-flight checks.**
-   - The right cluster
+3. **Pre-flight checks.** The experiment is skipped if any one fails:
+   - The right cluster (`kind-chaos`)
    - All pods Ready
    - Chaos Mesh daemon Ready
    - No leftover chaos
-   - Probes reachable
+   - Fault and target are in the catalog
+   - Redis and Postgres probes reachable
    - Baseline exists
+   - Safety controller healthy
+   - Guard verdict = approve
    - No `./KILL` file
    - Not LOCKED
 4. **Warm-up:** 60 s of steady load (2 orders/s). Must be healthy, or the experiment is **skipped**.
@@ -221,7 +224,7 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
 7. **Experiment panel** (fault, why, hypothesis, auto-stop reason, recovery time, timeline) and the **fate table**.
 8. **Agent 2 panel**: its reasoning steps, root cause and recommended fixes.
 9. **"Ask Agent 2" chat** (RAG):
-   - (a) Searches ~70 small records: run results, diagnoses, Kubernetes events, log lines, the fix playbook and these docs, using BM25 keyword search.
+   - (a) Searches ~80 small records: run results, diagnoses, Kubernetes events, log lines, the fix playbook and `docs/` (FACTS, PROGRESS, JUDGES_GUIDE), using BM25 keyword search.
    - (b) Gemini answers only from those records and must cite them.
    - (c) If Gemini is down, the chat shows the matching records instead.
 
@@ -315,6 +318,11 @@ uv run chaosctl killswitch-test         # kill switch acceptance test, 3× each 
   Fix with `kubectl -n n8n-chaos rollout restart deploy/n8n-worker`.
 - `chaosctl up` resets the worker count to 1 (Helm values). Re-apply step 5 afterwards.
 - `kubectl` must point at `kind-chaos` (`kubectl config use-context kind-chaos`), or the harness refuses to run.
+- **Gemini free-tier quota runs out** after a day of testing (HTTP 429). Then Agent 1, Agent 2 and the chat silently use
+  their deterministic fallbacks (the dashboard labels them "deterministic fallback"). The "answered by" / source label
+  tells you which one you got. Before a demo, check the quota in Google AI Studio. It resets at midnight Pacific; or put a
+  key from another Google Cloud project in `.env`. Identical questions are answered from the cache (`state/llm_cache.sqlite`)
+  without using quota.
 
 ## 3.6 Repository layout
 
@@ -368,7 +376,7 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 | 7 | **T5/T6 Agent 1 + guard** | Gemini plan cites real graph IDs; the guard puts E1 before E2 and gates E2 on a passed E1. |
 | 8 | **T7 experiments** | See 4.2. |
 | 9 | **Dashboard** | Live charts, markers, fate table, then step bar, system map and Agent 1 menu. |
-| 10 | **Agent 2** | Blind diagnosis with visible reasoning; 3 of 3 root causes correct. Fixes advisory only. |
+| 10 | **Agent 2** | Blind diagnosis with visible reasoning; **4 of 4 root causes correct**. Fixes advisory only. A blindness leak (Chaos Mesh events were visible to it) was found and fixed; the one diagnosis made before the fix was re-run blind. |
 | 11 | **RAG chat** | "Ask Agent 2" on the dashboard with cited answers. |
 | 12 | **Cleanup** | Removed unused heartbeat workflow and redundant validate step; ranking tie-break; one-command `demo`. |
 
@@ -376,7 +384,7 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 
 | Run | Experiment | What happened | Agent 2 (blind) |
 |---|---|---|---|
-| r1010-155337 | **E1** worker kill, 1 worker | Active jobs → 0, queue 0 → ~52, **W1 p95 4.7 s → 29.8 s**, **W2 still "200 OK"** (silent). New worker Ready at +34 s. All 10 in-flight orders completed exactly once (we had predicted duplicates: wrong). Backlog never drained | ✅ correct, fix: run 2 workers |
+| r1010-155337 | **E1** worker kill, 1 worker | Active jobs → 0, queue 0 → ~52, **W1 p95 4.7 s → 29.8 s**, **W2 still "200 OK"** (silent). New worker Ready at +34 s. All 10 in-flight orders completed exactly once (we had predicted duplicates: wrong). Backlog never drained | ✅ correct, fix: run 2 workers (re-run blind after the leak fix; Gemini was over quota, so this one is the deterministic fallback) |
 | r1010-155845 | E1 + strict queue limit 20 | **Auto-stopped** ("queue_waiting 22 > 20"); load stopped, chaos removed, watchdog OK, no manual action | - |
 | r1010-160741 | E1, 1 worker | **Auto-stopped** (p95 24 s > 20 s after the 90 s grace) → E2 stays locked | - |
 | | *Engineer applied Agent 2's fix: 2 workers* | | |
@@ -384,6 +392,8 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 | r1010-162355 | E1 | **Discarded**: laptop CPU saturated (load 46 on 8 cores) → turned Grafana/Prometheus off | - |
 | r1010-163348 | **E1** after fix | **Passed**: back to baseline in **78.8 s**. But 10 phantom successes + 11 lost-with-error among 28 in-flight | ✅ correct; found duplicate-key errors in Postgres logs |
 | r1010-163829 | **E2** Redis kill (unlocked) | Redis back in **1.2 s**, but n8n-main + workers restarted → **~60 s total outage**; auto-stopped (p95 25.8 s) | ✅ correct, fixes: Redis persistence, higher Redis timeout, idempotent inserts |
+| | *Workflows simplified (W3 + validate step removed), dashboard story added* | | |
+| r1010-214152 | **`chaosctl demo --queue-abort 20`**: Agent 1 picked **E1** | 2 workers: **no visible symptom** (no auto-stop needed), replacement Ready and SLIs back in **33.2 s**; of 8 in-flight orders, 7 completed once, **1 async order lost silently** | ✅ correct, fix: graceful shutdown |
 
 ## 4.3 Findings (weaknesses found)
 1. **One worker has no headroom.** After a worker kill the backlog never drains under normal load.
@@ -395,12 +405,19 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 5. **Repeated faults on one pod slow recovery** (Kubernetes back-off).
 6. **Wrong prediction (good to show):** we expected duplicates after a worker kill. n8n re-ran stalled jobs and completed
    each exactly once.
+7. **Even with 2 workers, a worker kill still loses work silently:** customers saw nothing (no errors, latency normal,
+   back in 33 s), but 1 async order that was told "200 OK" was never saved. Health and latency alone would call this a clean pass.
 
 ## 4.4 Current state of the cluster (as of the last session)
 - Kind cluster `chaos` running.
 - n8n-worker scaled to **2**. Grafana and Prometheus scaled to **0**.
 - 2 workflows published. Dashboard at :8787.
-- Run history in `state/history.json`: E1 passed, E2 tested, so Agent 1 will now prefer the Redis experiment.
+- Run history in `state/history.json`: E1 passed twice, E2 tested once. Both experiments are now "tested", so the
+  scorer ranks the worker kill first. The guard still orders tier 1 before tier 3. **To make Agent 1's choice interesting
+  again, enable more faults (Part 5).**
+- **Gemini quota is exhausted** (429 `RESOURCE_EXHAUSTED` on `gemini-3.8-flash`, 504 timeouts on the fallback model) as of
+  the last session. Everything still works through the deterministic fallbacks, but the AI panels then show the fallback
+  text, and the retries make an Agent 2 call take ~90 s. See the gotcha in 3.5.
 
 ---
 
@@ -415,6 +432,7 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 | **Must** | **Clean run from scratch** on a fresh clone, following only this README | `kind delete cluster --name chaos` first |
 | Should | Re-run E2 after the Redis fix (`k8s/redis-hardened.yaml`) to show before/after | Stretch goal "re-run after a fix" |
 | Should | Detectability: alert rules (PrometheusRule) and when they fired | Needs Prometheus back on (CPU cost) |
+| **Must** | Gemini quota for demo day (see 3.5) | Fresh key/project, or pre-run the demo once so answers are cached |
 | Open question | Organizers: is a hosted LLM (Gemini) OK, or must the model be open source? (gate G7) | `llm.py` is one function; an Ollama provider is a small add |
 | Nice | Combined failures; Grafana dashboard; SQLite checkpointer for LangGraph resume | |
 

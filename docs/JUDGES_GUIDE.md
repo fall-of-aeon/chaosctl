@@ -79,7 +79,7 @@ Before: `uv run chaosctl dashboard` and open http://127.0.0.1:8787 next to the t
 |---|---|---|
 | **What we do** | Chaos Mesh deletes the only n8n-worker pod (no graceful shutdown) while about 8 executions are running | Chaos Mesh deletes the Redis pod (no persistence) while jobs are queued and running |
 | **Risk tier** | 1 (one consumer) | 3 (the queue every workflow depends on), only allowed after E1 passed |
-| **What we saw** | No consumer for about 30 s, queue climbs to about 50, W1 p95 4.7 s → about 30 s, W2 still 200 OK. New worker Ready at +34 s. In-flight orders were re-run and completed exactly once (we had predicted duplicates: wrong). The backlog never drained: one worker has no spare capacity | See `docs/PROGRESS.md` / the run report |
+| **What we saw** | No consumer for about 30 s, queue climbs to about 50, W1 p95 4.7 s → about 30 s, W2 still 200 OK. New worker Ready at +34 s. In-flight orders were re-run and completed exactly once (we had predicted duplicates: wrong). The backlog never drained: one worker has no spare capacity | Redis was back in 1.2 s, but n8n-main and the workers lost their connection and restarted: about **60 s total outage**, W2 stopped accepting too. 14 phantom successes, 10 lost with an error. Auto-stopped by the safety controller (p95 25.8 s) |
 | **How it recovers during the test** | Kubernetes replaces the pod automatically; our watchdog checks it is Ready within 120 s and would restart it otherwise | Same: Kubernetes recreates Redis; the n8n services reconnect |
 | **Recommended fix (Agent 2, from the playbook)** | Run 2+ workers; alert on "queue growing with zero active jobs"; worker readiness that checks Redis | Redis persistence (AOF on a volume) so a restart keeps the queue; raise the Redis timeout threshold; idempotent inserts |
 
@@ -98,4 +98,4 @@ deterministic). **Agent 2 recommends** fixes to the system's design. **An engine
 - **"How do you know a request was lost?"** Every request has a unique ID; we reconcile the client's view with the
   rows in Postgres.
 - **"Why is your hypothesis sometimes wrong?"** That's the point of experimenting: we predicted duplicates after a
-  worker kill; n8n re-ran the stalled jobs and completed each exactly once. The report says so.
+  worker kill; n8n re-ran the stalled jobs and completed each exactly once. Our progress log says so.
