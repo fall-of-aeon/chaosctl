@@ -306,5 +306,48 @@ def dashboard(port: int = 8787):
     serve(port)
 
 
+@app.command()
+def diagnose(run: str = typer.Option(None, help="run id (default: newest)"), exp: str = "exp-01",
+             llm: bool = typer.Option(True, "--llm/--no-llm"), pace: float = typer.Option(0.8, help="seconds per thought")):
+    """Agent 2: blind diagnosis of an experiment's evidence, thinking out loud, with ranked fix recommendations."""
+    import time
+
+    from chaosctl.agents.diagnosis import PLAYBOOK, diagnose as run_diag, grade
+    from chaosctl.journal import Journal
+
+    rdir = ROOT / "reports" / run if run else max((p for p in (ROOT / "reports").glob("r*") if p.is_dir()),
+                                                 key=lambda p: p.stat().st_mtime)
+    bundle = json.loads((rdir / "evidence" / f"{exp}.json").read_text())
+    console.rule(f"[bold]Agent 2 · blind diagnosis · {rdir.name}/{exp}[/bold]")
+    console.print("[dim]Input: metrics trace, k8s events, logs, fate table. NOT told what was injected.[/dim]\n")
+    out = run_diag(bundle, journal=Journal(rdir / "journal.jsonl"), use_llm=llm)
+    (rdir / "evidence" / f"{exp}.diagnosis.json").write_text(json.dumps(out, indent=2))
+
+    console.print("[bold]1. Deterministic detectors fired[/bold]")
+    for h in out["detectors"]:
+        console.print(f"   [{'red' if h['severity'] in ('Critical', 'High') else 'yellow'}]{h['severity']:<8}[/] "
+                      f"{h['id']}: {h['detail']}")
+        time.sleep(pace / 3)
+    console.print(f"\n[bold]2. Reasoning[/bold] [dim]({out['source']})[/dim]")
+    colors = {"observe": "cyan", "hypothesize": "magenta", "check": "yellow", "conclude": "green"}
+    for i, t in enumerate(out["thoughts"], 1):
+        console.print(f"   [{colors.get(t['step'], 'white')}]{t['step']:>11}[/] │ {t['text']}")
+        time.sleep(pace)
+    console.print(f"\n[bold]3. Root cause:[/bold] {out['root_cause']}")
+    console.print("[bold]   Failure chain:[/bold] " + "  →  ".join(out["failure_chain"]))
+    console.print("\n[bold]4. Recommended fixes (from the vetted playbook; not applied)[/bold]")
+    for i, f in enumerate(out["fixes"], 1):
+        pb = PLAYBOOK[f["playbook_id"]]
+        console.print(f"   {i}. [bold]{pb['title']}[/bold]  [dim](effort {pb['effort']}, impact {pb['impact']})[/dim]")
+        console.print(f"      why: {f['why']}")
+        console.print(f"      change: {pb['change']}")
+        console.print(f"      verify: {pb['verify']}")
+    plan_p = rdir / "evidence" / f"{exp}.plan.json"
+    if plan_p.exists():
+        g = grade(out, json.loads(plan_p.read_text()))
+        console.print(f"\n[bold]5. Grading (after the fact):[/bold] injected {g['fault']} on {g['actual_target']} → "
+                      f"blind root cause {'[green]CORRECT[/green]' if g['root_cause_correct'] else '[red]MISSED[/red]'}")
+
+
 if __name__ == "__main__":
     app()

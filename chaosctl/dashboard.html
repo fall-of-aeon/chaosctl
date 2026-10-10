@@ -126,6 +126,7 @@ td.num { text-align: right; font-weight: 600; }
     <div class="card" id="exp-info"><h2>Experiment</h2><div class="empty">No experiment run yet.</div></div>
     <div class="card" id="exp-fates"><h2>Fate of in-flight requests</h2><div class="empty">Appears when an experiment finishes.</div></div>
   </section>
+  <section class="card" id="agent2" style="margin-top:12px"><h2>Agent 2 · blind diagnosis</h2><div class="empty">Run <code>chaosctl diagnose</code> after an experiment.</div></section>
 </div>
 <div class="tooltip" id="tip"></div>
 
@@ -346,7 +347,22 @@ function renderExp() {
   }
 }
 
-function render() { if (!state) return; renderTop(); renderCharts(); renderExp(); }
+function renderDiag() {
+  const dg = state.run?.diagnosis;
+  if (!dg) return;
+  const tag = {observe: "var(--series-1)", hypothesize: "var(--series-2)", check: "var(--warning)", conclude: "var(--good)"};
+  $("agent2").innerHTML = `<h2>Agent 2 · blind diagnosis · ${dg.exp_id} <span class="h-tag">not told what was injected · ${dg.source.startsWith("llm") ? "Gemini" : "deterministic fallback"}</span></h2>
+    <div style="display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+      <div><div class="label" style="color:var(--text-secondary);margin-bottom:6px">Reasoning</div>
+        <ol style="margin:0;padding-left:0;list-style:none;display:grid;gap:6px">${dg.thoughts.map((t) =>
+          `<li style="display:grid;grid-template-columns:92px 1fr;gap:8px"><span style="font-weight:600;color:var(--text-secondary);border-left:3px solid ${tag[t.step] || "var(--axis)"};padding-left:6px">${t.step}</span><span>${t.text}</span></li>`).join("")}</ol></div>
+      <div><div class="label" style="color:var(--text-secondary);margin-bottom:6px">Root cause</div><div style="margin-bottom:10px">${dg.root_cause}</div>
+        <div class="label" style="color:var(--text-secondary);margin-bottom:6px">Recommended fixes (advisory, from the vetted playbook)</div>
+        <ol style="margin:0;padding-left:18px;display:grid;gap:6px">${dg.fixes.map((f) => `<li><b>${f.playbook_id.replaceAll("_", " ")}</b>: ${f.why}</li>`).join("")}</ol></div>
+    </div>`;
+}
+
+function render() { if (!state) return; renderTop(); renderCharts(); renderExp(); renderDiag(); }
 
 async function poll() {
   try { state = await (await fetch("/api/state", {cache: "no-store"})).json(); render(); }

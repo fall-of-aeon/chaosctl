@@ -49,3 +49,15 @@
 - Controller tripped on "queue_waiting 22 > 20" within seconds; load stopped, chaos deleted, watchdog confirmed all workloads Ready without manual action. Fates: 6 completed once, 1 lost silently (W2), 1 lost visibly (W1). Cause not yet established.
 
 ## Live dashboard: `chaosctl dashboard` -> http://127.0.0.1:8787 (service tiles, W1 p95 vs baseline, throughput W1 vs W2, queue waiting vs active, event markers, experiment panel, fate table).
+
+## Agent 2 (diagnosis) + dashboard panel (2026-10-10)
+- `chaosctl diagnose`: blind (Chaos Mesh events/log lines stripped), deterministic detectors, Gemini reasoning steps (observe/hypothesize/check/conclude), root cause, failure chain, fixes only from `playbook.yaml`; advisory only, never changes the system. Grades itself afterwards against the plan. On the first E1 run: root cause CORRECT ("single worker"), top fix "run at least 2 workers".
+- Fixed during testing: blindness leak (Chaos Mesh events visible to Agent 2), false-positive `queue_state_lost` on E1.
+
+## E1 re-runs (2026-10-10)
+- r1010-160741 (1 worker): auto-stopped by the safety controller, `w1_p95_ms 24044 > 20000` after the 90 s grace: backlog never drains with one worker. Tier rule therefore keeps E2 locked.
+- Engineer applied Agent 2's top fix by hand: `kubectl scale deploy/n8n-worker --replicas=2`.
+- r1010-161435: E1 skipped, `baseline_unstable` (pre-flight refused to inject; n8n-main had Postgres connection timeouts).
+- r1010-162355: DISCARDED as invalid: host CPU saturated (load average 46 on 8 cores; Grafana 52 %, Prometheus 38 %, kube-apiserver 43 % from 1 Hz probes), system already degraded before injection.
+- Mitigation: Grafana and Prometheus scaled to 0 (not used by the demo; our dashboard replaces them), pod probe now uses one API call instead of five. 2-worker baseline after: W1 100 %, p95 6.0 s, queue 0.
+- Judge guide: docs/JUDGES_GUIDE.md.

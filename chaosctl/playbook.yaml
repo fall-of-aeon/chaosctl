@@ -1,0 +1,86 @@
+# Vetted fixes (BUILD_PLAN 9.4). Agent 2 may only recommend ids from this file.
+# Advisory only: Agent 2 recommends, an engineer applies.
+fixes:
+  scale_workers:
+    title: Run at least 2 n8n workers
+    addresses: [consumers_down, backlog_not_drained, latency_degradation]
+    effort: low
+    impact: high
+    source: "n8n Helm chart queueMode.workerReplicaCount (default 2); docs.n8n.io/hosting/scaling/queue-mode"
+    change: "queueMode.workerReplicaCount: 1 -> 2"
+    verify: "kubectl -n n8n-chaos get deploy n8n-worker  # READY 2/2, then re-run E1"
+    rollback: "kubectl -n n8n-chaos scale deploy/n8n-worker --replicas=1"
+  redis_persistence:
+    title: Enable Redis AOF persistence on a PVC
+    addresses: [queue_state_lost, lost_work]
+    effort: medium
+    impact: high
+    source: "redis.io/docs/latest/operate/oss_and_stack/management/persistence"
+    change: "redis --appendonly yes --appendfsync everysec, data on a PersistentVolumeClaim"
+    verify: "redis-cli -p 16379 CONFIG GET appendonly  # yes, then re-run E2"
+    rollback: "kubectl -n n8n-chaos apply -f k8s/redis.yaml"
+  idempotency_keys:
+    title: Make order inserts idempotent on request_id
+    addresses: [duplicates, phantom_success]
+    effort: low
+    impact: high
+    source: "PostgreSQL INSERT ... ON CONFLICT; unique index on orders(request_id)"
+    change: "CREATE UNIQUE INDEX ... ON orders(request_id); INSERT ... ON CONFLICT DO NOTHING"
+    verify: "SELECT request_id, count(*) FROM orders GROUP BY 1 HAVING count(*) > 1  # 0 rows"
+    rollback: "DROP INDEX orders_request_id_unique"
+  async_status_callback:
+    title: Give async (W2) clients a way to learn the real outcome
+    addresses: [silent_async_failure, lost_work]
+    effort: medium
+    impact: high
+    source: "n8n Webhook node Respond: Immediately returns before execution (docs.n8n.io webhook node)"
+    change: "return an execution/request id and expose a status endpoint or callback; alert on accepted-but-not-completed"
+    verify: "reconciliation gap (accepted W2 without a row after 30 s) stays 0 during E1"
+  queue_depth_alert:
+    title: Alert on queue depth and on zero active consumers
+    addresses: [detectability_gap, consumers_down, backlog_not_drained]
+    effort: low
+    impact: medium
+    source: "n8n metrics n8n_scaling_mode_queue_jobs_waiting / _active (N8N_METRICS_INCLUDE_QUEUE_METRICS)"
+    change: "PrometheusRule: jobs_waiting > 50 for 15s; jobs_active == 0 and jobs_waiting > 0 for 10s"
+    verify: "rule fires within 15 s during E1"
+  worker_health_probe:
+    title: Worker readiness that checks Redis, not just the process
+    addresses: [detectability_gap]
+    effort: low
+    impact: medium
+    source: "QUEUE_HEALTH_CHECK_ACTIVE exposes /healthz/readiness on workers (docs.n8n.io queue mode)"
+    change: "worker readinessProbe httpGet /healthz/readiness on QUEUE_HEALTH_CHECK_PORT instead of pgrep"
+    verify: "worker goes NotReady when Redis is unreachable"
+  stalled_job_tuning:
+    title: Tune lock duration / stalled interval for faster job recovery
+    addresses: [consumers_down, latency_degradation]
+    effort: low
+    impact: medium
+    source: "QUEUE_WORKER_LOCK_DURATION (60000), QUEUE_WORKER_STALLED_INTERVAL (30000) - docs.n8n.io queue-mode env vars"
+    change: "lower lock duration / stalled interval so jobs held by a dead worker are retried sooner"
+    verify: "time to last in-flight resolved drops in E1"
+  redis_timeout_threshold:
+    title: Raise QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD above typical Redis restart time
+    addresses: [dependency_restart]
+    effort: low
+    impact: medium
+    source: "QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD default 10000 ms (docs.n8n.io queue mode)"
+    change: "QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD: 10000 -> 30000"
+    verify: "n8n-main restart count unchanged during E2"
+  graceful_shutdown:
+    title: Keep graceful shutdown for planned worker stops
+    addresses: [lost_work]
+    effort: low
+    impact: low
+    source: "N8N_GRACEFUL_SHUTDOWN_TIMEOUT default 30 s (docs.n8n.io queue mode)"
+    change: "terminationGracePeriodSeconds >= N8N_GRACEFUL_SHUTDOWN_TIMEOUT"
+    verify: "graceful worker stop loses no jobs"
+  pod_disruption_budget:
+    title: PodDisruptionBudget for workers once replicas >= 2
+    addresses: [consumers_down]
+    effort: low
+    impact: low
+    source: "kubernetes.io/docs/concepts/workloads/pods/disruptions"
+    change: "pdb.enabled: true, minAvailable: 1"
+    verify: "voluntary evictions keep one worker"

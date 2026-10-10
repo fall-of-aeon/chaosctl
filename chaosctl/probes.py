@@ -108,12 +108,13 @@ class K8sProbe:
     def pods(self) -> dict:
         """graph node -> {ready, pods:[{name, uid, phase, ready, restarts}]}."""
         out = {}
+        try:  # one API call for all workloads (keeps load off the API server)
+            all_pods = self.core.list_namespaced_pod(NAMESPACE, _request_timeout=3).items
+        except Exception as exc:
+            return {node: {"ready": None, "err": type(exc).__name__, "pods": []} for node in WORKLOAD_SELECTORS}
         for node, sel in WORKLOAD_SELECTORS.items():
-            try:
-                items = self.core.list_namespaced_pod(NAMESPACE, label_selector=sel, _request_timeout=3).items
-            except Exception as exc:
-                out[node] = {"ready": None, "err": type(exc).__name__, "pods": []}
-                continue
+            want = dict(kv.split("=") for kv in sel.split(","))
+            items = [p for p in all_pods if all((p.metadata.labels or {}).get(k) == v for k, v in want.items())]
             pods = []
             for p in items:
                 statuses = p.status.container_statuses or []

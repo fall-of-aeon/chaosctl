@@ -86,7 +86,14 @@ def latest_run() -> dict:
             results = json.loads(rp.read_text())
         except ValueError:
             pass
-    return {"run_id": d.name, "events": events,
+    diag = None
+    dfiles = sorted((d / "evidence").glob("*.diagnosis.json"), key=lambda p: p.stat().st_mtime) if (d / "evidence").exists() else []
+    if dfiles:
+        try:
+            diag = json.loads(dfiles[-1].read_text()) | {"exp_id": dfiles[-1].name.split(".")[0]}
+        except ValueError:
+            pass
+    return {"run_id": d.name, "events": events, "diagnosis": diag,
             "results": [{k: r.get(k) for k in ("exp_id", "fault", "target", "status", "abort_reason", "recovery_time_s",
                                                "timeline", "manual_action_needed", "restarts_delta", "plan_reason",
                                                "hypothesis")} | {"fates": (r.get("fates") or {}).get("summary")}
