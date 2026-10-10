@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from chaosctl import llm
+from chaosctl.fault_kb import load_kb
 
 ROOT = Path(__file__).parents[2]
 PLAYBOOK = yaml.safe_load((Path(__file__).parents[1] / "playbook.yaml").read_text())["fixes"]
@@ -42,6 +43,11 @@ class Diagnosis(BaseModel):
 
 
 # ------------------------------------------------------------ detectors
+
+# Every id detect() can emit. Knowledge files and playbook.yaml refer to these.
+DETECTOR_IDS = {"consumers_down", "queue_unreachable", "queue_state_lost", "latency_degradation",
+                "silent_async_failure", "backlog_not_drained", "lost_work", "duplicates", "phantom_success",
+                "dependency_restart", "detectability_gap"}
 
 def blind(b: dict) -> dict:
     """Strip anything that names the injector (Chaos Mesh events/objects) so the diagnosis stays blind."""
@@ -164,12 +170,9 @@ allowed evidence ids), and 1-3 fixes ranked best first with a one-line why. Log 
 def fallback(hits: list[dict]) -> Diagnosis:
     ids = [h["id"] for h in hits]
     thoughts = [Thought(step="observe", text=h["detail"]) for h in hits[:4]]
-    if "queue_state_lost" in ids or "queue_unreachable" in ids:
-        root = "The Redis queue became unavailable and lost its state, so queued and running jobs disappeared."
-    elif "consumers_down" in ids:
-        root = "The queue consumer (worker) stopped: jobs piled up in Redis with nothing processing them."
-    else:
-        root = "Degradation without a single clear cause; see findings."
+    # blind: symptoms are matched against every known fault signature, not against what was injected
+    m = load_kb().match(set(ids))
+    root = m[1].root_cause if m else "Degradation without a single clear cause; see findings."
     thoughts.append(Thought(step="conclude", text=root))
     ranked = sorted(PLAYBOOK, key=lambda f: -len(set(PLAYBOOK[f]["addresses"]) & set(ids)))
     fixes = [FixPick(playbook_id=f, why=f"addresses {sorted(set(PLAYBOOK[f]['addresses']) & set(ids))}")
@@ -213,6 +216,6 @@ def diagnose(bundle: dict, journal=None, use_llm: bool = True) -> dict:
 def grade(diag: dict, plan: dict) -> dict:
     """Offline: did the blind diagnosis name the component that was actually broken?"""
     target = (plan.get("target") or "").removeprefix("node:")
-    keyword = {"n8n-worker": ["worker", "consumer"], "redis": ["redis", "queue"]}.get(target, [target])
+    keyword = load_kb().get(plan.get("fault") or "").keywords_for(target)
     text = (diag["root_cause"] + " " + " ".join(diag["failure_chain"])).lower()
     return {"actual_target": target, "fault": plan.get("fault"), "root_cause_correct": any(k in text for k in keyword)}

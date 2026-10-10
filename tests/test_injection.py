@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -8,7 +9,7 @@ from chaosctl.agents import injection as inj
 from chaosctl.chaos.chaosmesh import load_catalog
 from tests.test_graph import build
 
-CAT = load_catalog()
+CAT = load_catalog(Path(__file__).parent / "fixtures" / "catalog.yaml")  # frozen; live catalog may change
 POLICY = yaml.safe_load(open("chaosctl/policy.yaml"))
 
 

@@ -1,0 +1,18 @@
+# Knowledge for catalog fault redis_pod_kill (format: docs/KNOWLEDGE_BASE.md)
+fault: redis_pod_kill
+alias: E2
+title: Redis pod kill
+category: dependency_loss
+summary: Delete the Redis pod (no persistence) while jobs are queued and running.
+hypothesis: >-
+  queued and active jobs are lost because redis has no persistence; n8n may restart
+  if the outage exceeds the 10 s redis timeout
+symptoms:
+  expected: [queue_unreachable, latency_degradation]
+  possible: [queue_state_lost, lost_work, dependency_restart, silent_async_failure, detectability_gap]
+signature:
+  any_of: [queue_state_lost, queue_unreachable]
+  root_cause: "The Redis queue became unavailable and lost its state, so queued and running jobs disappeared."
+  priority: 20
+grading_keywords: [redis, queue]
+related_fixes: [redis_persistence, redis_timeout_threshold, idempotency_keys, async_status_callback]

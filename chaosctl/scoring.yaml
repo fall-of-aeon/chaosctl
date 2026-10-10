@@ -1,0 +1,22 @@
+# Resilience score (docs/KNOWLEDGE_BASE.md#resilience-score). Deterministic: computed only from the evidence
+# bundle and run result, never from an LLM. Every component is 0-100 (higher = more resilient).
+# A component without data is reported as N/A and the remaining weights are rescaled.
+weights:
+  availability: 0.30     # A: W1 client success rate after injection
+  self_recovery: 0.25    # S: recovered without help, and how fast
+  latency: 0.20          # L: peak W1 p95 vs baseline and the abort limit
+  data_integrity: 0.15   # D: in-flight orders completed exactly once
+  detectability: 0.10    # M: did health checks show the incident
+latency:
+  ok_ratio: 1.5          # peak p95 <= 1.5x baseline -> 100; >= abort limit -> 0; linear in between
+self_recovery:
+  fast_s: 30             # SLIs back within 30 s -> 100
+  slow_score: 70         # SLIs back at the recovery deadline -> 70 (linear in between)
+  slis_never_recovered: 60   # pods recovered on their own, SLIs not back before the window ended
+  watchdog_restart: 40   # the watchdog had to restart a workload
+  locked: 0              # recovery failed, harness LOCKED
+bands:                   # label for the total score (lower bound -> label)
+  85: resilient
+  70: degraded but recovered
+  50: fragile
+  0: failing
