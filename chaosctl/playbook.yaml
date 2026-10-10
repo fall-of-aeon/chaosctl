@@ -84,3 +84,66 @@ fixes:
     source: "kubernetes.io/docs/concepts/workloads/pods/disruptions"
     change: "pdb.enabled: true, minAvailable: 1"
     verify: "voluntary evictions keep one worker"
+  http_retry_backoff:
+    title: Retry the downstream HTTP call with backoff
+    addresses: [sync_errors, downstream_errors, lost_work]
+    effort: low
+    impact: high
+    source: "n8n node settings Retry On Fail / Max Tries / Wait Between Tries (docs.n8n.io/flow-logic/error-handling)"
+    change: "HTTP Request node: retryOnFail true, maxTries 3, waitBetweenTries 1000 ms (idempotent calls only)"
+    verify: "re-run mockapi_http_500 / mockapi_http_abort: W1 errors drop to ~0 for a 30 s outage"
+    rollback: "set retryOnFail false on the HTTP Request node and re-publish the workflow"
+  http_timeout_budget:
+    title: Give the downstream call a timeout shorter than the client's wait
+    addresses: [latency_degradation, sync_errors]
+    effort: low
+    impact: medium
+    source: "n8n HTTP Request node option Timeout (docs.n8n.io HTTP Request node, Options)"
+    change: "HTTP node timeout below the W1 client timeout (e.g. 10 s), with an error branch that answers W1 explicitly"
+    verify: "re-run mockapi_latency past_timeout: W1 gets a fast, explicit error instead of hanging"
+    rollback: "restore the previous timeout (30000 ms) and re-publish"
+  db_connection_pooling:
+    title: Bound and pool database connections
+    addresses: [db_errors, sync_errors, latency_degradation]
+    effort: medium
+    impact: high
+    source: "n8n env DB_POSTGRESDB_POOL_SIZE (docs.n8n.io environment variables, database); pgbouncer.org"
+    change: "PgBouncer in transaction mode in front of postgres; per-role connection limits so n8n keeps reserved slots"
+    verify: "re-run postgres_overload hold85: n8n keeps saving orders, no 'too many clients' errors"
+    rollback: "point n8n DB host back at postgres directly"
+  disk_usage_alert:
+    title: Alert on database volume usage and size it with headroom
+    addresses: [db_errors]
+    effort: low
+    impact: high
+    source: "kubelet_volume_stats_used_bytes / capacity_bytes metrics; postgresql.org/docs/current/disk-full.html"
+    change: "PrometheusRule: volume used > 80 % for 5 min; PVC sized for growth; prune old n8n executions (EXECUTIONS_DATA_PRUNE)"
+    verify: "re-run postgres_disk_full: the alert fires before writes fail"
+    rollback: "delete the PrometheusRule"
+  autoscale_workers:
+    title: Scale workers on queue depth
+    addresses: [queue_backlog, backlog_not_drained, latency_degradation]
+    effort: medium
+    impact: high
+    source: "KEDA Redis Lists scaler (keda.sh/docs/scalers/redis-lists); n8n queue mode scaling (docs.n8n.io/hosting/scaling/queue-mode)"
+    change: "KEDA ScaledObject on the Bull wait list: 2-6 n8n-worker replicas, target ~20 waiting jobs per worker"
+    verify: "re-run traffic_spike x5: workers scale out, the backlog drains during the spike"
+    rollback: "delete the ScaledObject; workerReplicaCount back to 2"
+  webhook_processors:
+    title: Run webhook processors separately from n8n-main, more than one
+    addresses: [ingress_down, dependency_restart]
+    effort: medium
+    impact: high
+    source: "n8n queue mode webhook processors (docs.n8n.io/hosting/scaling/queue-mode, Webhook processors); Helm chart webhook.*"
+    change: "enable webhook processor pods (2 replicas) behind the webhook Service; n8n-main only serves the editor"
+    verify: "re-run main_pod_kill: webhooks keep answering"
+    rollback: "disable webhook processors in the Helm values"
+  postgres_ha:
+    title: Highly available Postgres with automatic failover
+    addresses: [db_errors, sync_errors, lost_work]
+    effort: high
+    impact: high
+    source: "CloudNativePG (cloudnative-pg.io) primary/standby with automated failover"
+    change: "replace the single postgres StatefulSet with a 3-instance CloudNativePG cluster"
+    verify: "re-run postgres_pod_kill: failover in seconds, orders keep being saved"
+    rollback: "point n8n back at the single-instance postgres"

@@ -1,0 +1,23 @@
+# Knowledge for catalog fault worker_redis_partition (format: docs/KNOWLEDGE_BASE.md)
+fault: worker_redis_partition
+title: Worker-Redis network partition
+category: network
+summary: Chaos Mesh cuts one worker off from Redis (both directions) for 20 or 60 s; the other worker is unaffected.
+hypothesis: the other worker keeps taking new jobs; jobs active on the partitioned worker finish late, or, if the
+  partition reaches the 60 s lock duration, are redelivered and run twice
+symptoms:
+  expected:
+  - latency_degradation
+  possible:
+  - lost_work
+  - duplicates
+  - queue_backlog
+  - detectability_gap
+grading_keywords:
+- partition
+- network partition
+- connectivity
+related_fixes:
+- stalled_job_tuning
+- idempotency_keys
+- worker_health_probe

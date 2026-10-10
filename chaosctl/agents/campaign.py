@@ -56,7 +56,7 @@ def build_campaign(runner, graph_loader, policy: dict, journal: Journal, approve
 
     def plan(s: CampaignState) -> CampaignState:
         out = agent.invoke({"graph": s["graph"], "catalog": s["catalog"], "policy": s["policy"],
-                            "history": s["history"], "use_llm": s.get("use_llm", True)})
+                            "history": s["history"], "use_llm": s.get("use_llm", True), "only": s.get("only")})
         exps = out["plan"].experiments
         if s.get("only"):
             exps = [e for e in exps if e.fault in s["only"]]

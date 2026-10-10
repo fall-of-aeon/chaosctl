@@ -1,7 +1,9 @@
 """Thin Mistral wrapper: structured JSON out, cached, bounded, never hangs.
 
-Callers use generate_json(purpose, prompt, Model) and must catch LLMUnavailable
-and fall back to their deterministic path. Nothing here makes safety decisions.
+Callers use generate_json(purpose, prompt, Model) and must catch LLMUnavailable,
+report it with alerts.llm_fallback() (never silently) and then fall back to their
+deterministic path. Pass meta={} to learn whether the answer came from the API or
+the local cache. Nothing here makes safety decisions.
 """
 from __future__ import annotations
 
@@ -126,16 +128,23 @@ def generate_json(
     timeout_s: float = TIMEOUT_S,
     seed: int = 7,
     temperature: float = 0.1,
+    meta: dict | None = None,
 ) -> T:
-    """Return a validated model_cls instance or raise LLMUnavailable. A different seed (with a temperature above
-    ~0.3) is an independent sample."""
+    """Return a validated model_cls instance or raise LLMUnavailable (its message says why). A different seed
+    (with a temperature above ~0.3) is an independent sample. meta, if given, is filled with
+    {"source": "api"|"cache", "model": ...}."""
     real = call is None
     call = call or (lambda m, p, s: _call_mistral(m, p, s, timeout_s, seed, temperature))
     prompt = redact(prompt)
     schema = model_cls.model_json_schema()
     models = [m for m in (os.environ.get("MISTRAL_MODEL"), os.environ.get("MISTRAL_FALLBACK_MODEL")) if m]
     log = journal or (lambda _e: None)
+    meta = meta if meta is not None else {}
+    errors: list[str] = []
 
+    if not models:
+        log({"event": "llm", "purpose": purpose, "result": "no_model"})
+        raise LLMUnavailable("MISTRAL_MODEL not set")
     if not os.environ.get("MISTRAL_API_KEY") and real:
         log({"event": "llm", "purpose": purpose, "result": "no_api_key"})
         raise LLMUnavailable("MISTRAL_API_KEY not set")
@@ -147,6 +156,7 @@ def generate_json(
             row = conn.execute("SELECT output FROM cache WHERE key=?", (key,)).fetchone()
             if row:
                 log({"event": "llm", "purpose": purpose, "model": model, "prompt_hash": key[:16], "source": "cache"})
+                meta.update(source="cache", model=model)
                 return model_cls.model_validate_json(row[0])
 
             for attempt in range(MAX_RETRIES):
@@ -159,6 +169,7 @@ def generate_json(
                     raise
                 except ValidationError as exc:
                     log({"event": "llm", "purpose": purpose, "model": model, "result": "invalid_json", "err": str(exc)[:200]})
+                    errors.append(f"{model}: invalid JSON ({str(exc).splitlines()[0][:80]})")
                     break  # same model will likely repeat; go to fallback model
                 except Exception as exc:  # network, quota, server
                     log({"event": "llm", "purpose": purpose, "model": model, "result": "error",
@@ -166,12 +177,14 @@ def generate_json(
                     if _retryable(exc) and attempt < MAX_RETRIES - 1:
                         time.sleep(2 ** attempt)
                         continue
+                    errors.append(f"{model}: {type(exc).__name__}: {str(exc)[:120]}")
                     break
                 conn.execute("INSERT OR REPLACE INTO cache VALUES (?,?,?,?)", (key, model, obj.model_dump_json(), time.time()))
                 conn.commit()
                 log({"event": "llm", "purpose": purpose, "model": model, "prompt_hash": key[:16], "source": "api",
                      "latency_s": round(time.monotonic() - t0, 2)})
+                meta.update(source="api", model=model)
                 return obj
     finally:
         conn.close()
-    raise LLMUnavailable(f"no valid response for {purpose}")
+    raise LLMUnavailable(f"no valid response for {purpose}: " + ("; ".join(errors) or "unknown error"))

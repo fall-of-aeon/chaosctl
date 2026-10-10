@@ -1,0 +1,29 @@
+# Knowledge for catalog fault mockapi_latency (format: docs/KNOWLEDGE_BASE.md)
+fault: mockapi_latency
+alias: E4
+title: Mock API latency
+category: network
+summary: Chaos Mesh delays every request to the mock API's /work by 2, 10 or 30 s (30 s passes the HTTP node timeout).
+hypothesis: W1 p95 rises by the injected delay; past the 30 s known timeout W1 requests fail
+symptoms:
+  expected:
+  - latency_degradation
+  possible:
+  - silent_async_failure
+  - queue_backlog
+  - sync_errors
+signature:
+  any_of: []
+  all_of:
+  - latency_degradation
+  root_cause: 'Requests slowed down without failing: a dependency on the request path (downstream HTTP service,
+    database or queue) became slow.'
+  priority: 2
+grading_keywords:
+- mock-api
+- mock
+- downstream
+- slow dependency
+related_fixes:
+- http_timeout_budget
+- async_status_callback

@@ -21,16 +21,36 @@ def iso(tmp_path, monkeypatch):
     monkeypatch.delenv("MISTRAL_FALLBACK_MODEL", raising=False)
 
 
-def run(use_llm=True, call=None, history=None):
+E1E2 = ["worker_pod_kill", "redis_pod_kill"]
+
+
+def run(use_llm=True, call=None, history=None, only=E1E2):
     agent = inj.build_injection_agent(llm_call=call)
     return agent.invoke({"graph": build(), "catalog": CAT, "policy": POLICY,
-                         "history": history or [], "use_llm": use_llm})
+                         "history": history or [], "use_llm": use_llm, "only": only})
 
 
 def test_scored_candidates_only_enabled():
     scored = inj.score_candidates(build(), CAT, [])
-    triples = {(c["target"], c["fault"], c["rung"]) for c in scored}
-    assert triples == {("node:n8n-worker", "worker_pod_kill", "ungraceful"), ("node:redis", "redis_pod_kill", "ungraceful")}
+    enabled = {f for f, e in CAT["faults"].items() if e.get("enabled")}
+    assert {c["fault"] for c in scored} == enabled
+    assert not any(CAT["faults"][c["fault"]].get("test_only") for c in scored)
+    assert {(c["target"], c["fault"], c["rung"]) for c in scored} >= {
+        ("node:n8n-worker", "worker_pod_kill", "ungraceful"), ("node:redis", "redis_pod_kill", "ungraceful"),
+        ("node:n8n-worker", "worker_redis_partition", "d60"), ("node:mock-api", "mockapi_latency", "past_timeout")}
+
+
+def test_full_catalog_fallback_is_capped_diverse_and_gentle():
+    a, b = run(use_llm=False, only=None), run(use_llm=False, only=None)
+    assert a["plan"] == b["plan"]
+    exps = a["plan"].experiments
+    assert len(exps) == POLICY["rules"]["max_experiments_per_plan"]
+    assert len({e.target for e in exps}) >= 4                      # nodes take turns
+    tiers = [CAT["faults"][e.fault]["tier"] for e in exps]
+    assert tiers == sorted(tiers)                                  # tier rule
+    for e in exps:                                                 # gentlest rung of each fault
+        assert e.rung == next(iter(CAT["faults"][e.fault]["ladder"]))
+    assert all(v.verdict == "approve" for v in a["verdicts"])
 
 
 def test_fallback_plan_orders_e1_before_e2_and_is_deterministic():
@@ -61,14 +81,14 @@ def test_guard_reorders_llm_plan_redis_first():
          "reason": "node:n8n-worker consumes jobs", "cites": ["node:n8n-worker"]},
     ])
     out = run(call=call)
-    assert out["source"] == "llm"
+    assert out["source"] == "llm:api:m"
     assert [e.fault for e in out["plan"].experiments] == ["worker_pod_kill", "redis_pod_kill"]
     assert any("reordered" in n for n in out["notes"])
 
 
 @pytest.mark.parametrize("bad", [
     {"fault": "redis_pod_kill", "target": "node:postgres", "rung": "ungraceful", "reason": "x", "cites": ["node:postgres"]},
-    {"fault": "worker_graceful_kill", "target": "node:n8n-worker", "rung": "graceful", "reason": "x", "cites": ["node:n8n-worker"]},
+    {"fault": "worker_cpu_stress", "target": "node:n8n-worker", "rung": "w1_load80", "reason": "x", "cites": ["node:n8n-worker"]},
     {"fault": "worker_pod_kill", "target": "node:n8n-worker", "rung": "ungraceful", "reason": "x", "cites": ["node:kafka"]},
     {"fault": "worker_pod_kill", "target": "node:n8n-worker", "rung": "ungraceful", "reason": "see edge:redis->postgres", "cites": ["node:n8n-worker"]},
 ])

@@ -12,7 +12,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from chaosctl import llm
+from chaosctl import alerts, llm
 from chaosctl.fault_kb import load_kb
 from chaosctl.graph import Graph, node_id
 from chaosctl.journal import Journal, NullJournal
@@ -59,28 +59,38 @@ def score_candidates(graph: Graph, catalog: dict, history: list[dict]) -> list[d
     out = []
     for node, fault, rung in graph.candidates(catalog):
         entry = catalog["faults"][fault]
+        rung_index = list(entry.get("ladder", {})).index(rung) if rung in entry.get("ladder", {}) else 0
         crit = graph.nodes[node]["criticality"]
         untested = 0.0 if (node, fault) in tested else 1.0
         info_gain = 1.0 if node not in tested_nodes else 0.5
         tier_risk = (entry["tier"] - 1) / 2
         score = (WEIGHTS["criticality"] * crit + WEIGHTS["untested"] * untested
                  + WEIGHTS["info_gain"] * info_gain - WEIGHTS["tier_risk"] * tier_risk)
-        out.append({"target": node_id(node), "fault": fault, "rung": rung, "tier": entry["tier"],
+        out.append({"target": node_id(node), "fault": fault, "rung": rung, "rung_index": rung_index,
+                    "tier": entry["tier"], "kind": entry["chaos_kind"], "reversible": bool(entry.get("reversible")),
                     "score": round(score, 3), "criticality": crit, "untested": untested,
                     "info_gain": info_gain, "tier_risk": tier_risk})
-    return sorted(out, key=lambda c: (-c["score"], c["target"], c["fault"], c["rung"]))
+    # ladders are listed gentlest first, so ties go to the gentler rung
+    return sorted(out, key=lambda c: (-c["score"], c["target"], c["fault"], c["rung_index"]))
 
 
 # ------------------------------------------------------------ fallback
 
-def templated_plan(graph: Graph, scored: list[dict]) -> LLMPlan:
+def templated_plan(graph: Graph, scored: list[dict], max_n: int | None = None) -> LLMPlan:
+    """One experiment per (target, fault) at its gentlest rung, up to max_n. Nodes take turns
+    (best fault of every node, then the second best, ...), so a short plan covers more nodes."""
+    gentlest: dict[tuple[str, str], dict] = {}
+    for c in scored:  # already sorted by score, then gentlest rung
+        gentlest.setdefault((c["target"], c["fault"]), c)
+    per_node: dict[str, list[dict]] = {}
+    for c in gentlest.values():
+        per_node.setdefault(c["target"], []).append(c)
+    picks = []
+    for rnd in range(max((len(v) for v in per_node.values()), default=0)):
+        picks += sorted((v[rnd] for v in per_node.values() if rnd < len(v)),
+                        key=lambda c: (-c["score"], c["target"], c["fault"]))
     items = []
-    seen = set()
-    for c in scored:
-        key = (c["target"], c["fault"])
-        if key in seen:
-            continue
-        seen.add(key)
+    for c in picks[:max_n]:
         name = c["target"].removeprefix("node:")
         deps = [e["id"] for e in graph.edges if e["to"] == name][:3]
         br = graph.blast_radius(name)
@@ -206,8 +216,13 @@ def runtime_guard(item: PlanItem, verdict: GuardVerdict, graph: Graph, catalog: 
 
 # ------------------------------------------------------------ LLM prompt
 
+def max_plan(policy: dict) -> int:
+    return policy["rules"].get("max_experiments_per_plan", 6)
+
+
 def build_prompt(graph: Graph, scored: list[dict], history: list[dict], policy: dict, feedback: str | None) -> str:
-    cands = [{k: c[k] for k in ("target", "fault", "rung", "tier", "score")} for c in scored]
+    cands = [{k: c[k] for k in ("target", "fault", "rung", "tier", "kind", "reversible", "score")} for c in scored]
+    max_n = max_plan(policy)
     hist = [{k: h.get(k) for k in ("exp_id", "node", "fault", "status", "passed")} for h in history]
     kb = load_kb()
     faults = {f: kb.get(f).summary or kb.get(f).title for f in sorted({c["fault"] for c in scored})}
@@ -217,7 +232,8 @@ Choose which experiments to run, in what order, and explain why. You do not run 
 DEPENDENCY GRAPH (edges: A depends on B; blast radius of X = nodes that can reach X):
 {graph.summary()}
 
-ENABLED CANDIDATES (only these (target, fault, rung) triples are allowed; score is a deterministic prior):
+ENABLED CANDIDATES (only these (target, fault, rung) triples are allowed; score is a deterministic prior;
+rungs of one fault are listed gentlest first; reversible faults end on their own after a duration):
 {json.dumps(cands, indent=1)}
 
 WHAT EACH FAULT DOES:
@@ -228,11 +244,21 @@ RUN HISTORY:
 
 POLICY: tier 3 experiments are only allowed after a tier 1 experiment has passed. Inject only while requests
 are in flight: start_when must be of the form "in_flight>=N" with N >= {policy['rules']['require_in_flight_before_inject']['min_in_flight']}.
-cooldown_s between 30 and 600.
+cooldown_s between 30 and 600. Choose at most {max_n} experiments, at most one rung per (target, fault);
+prefer covering different nodes and failure kinds over repeating one.
 {f"PREVIOUS ATTEMPT WAS REJECTED: {feedback}" if feedback else ""}
 Return JSON: experiments[] each with id (exp-01..), fault, target (node id), rung, start_when, cooldown_s,
 reason (ONE line, cite node:/edge: ids from the graph), cites (list of node:/edge:/wf: ids used),
 hypothesis (a testable prediction; it is a hypothesis, not a fact)."""
+
+
+def llm_source(meta: dict) -> str:
+    """'llm:api:<model>' for a fresh answer, 'llm:cache:<model>' for a replay of an earlier identical prompt."""
+    return f"llm:{meta.get('source', '?')}:{meta.get('model', '?')}"
+
+
+def is_llm(source: str | None) -> bool:
+    return bool(source) and source.startswith("llm")
 
 
 # ------------------------------------------------------------ LangGraph subgraph
@@ -243,6 +269,7 @@ class InjState(TypedDict, total=False):
     policy: dict
     history: list[dict]
     use_llm: bool
+    only: list[str] | None   # restrict candidates to these faults (cli --exp)
     scored: list[dict]
     plan: LLMPlan
     source: str
@@ -258,31 +285,44 @@ def build_injection_agent(journal: Journal | None = None, llm_call=None):
 
     def score(s: InjState) -> InjState:
         scored = score_candidates(s["graph"], s["catalog"], s.get("history", []))
+        if s.get("only"):
+            scored = [c for c in scored if c["fault"] in s["only"]]
+            if not scored:
+                alerts.warn("Agent 1", f"none of {s['only']} is an enabled catalog fault for this graph; nothing to plan", j)
         j.write({"event": "agent1_scored", "candidates": scored})
         return {"scored": scored, "loops": 0, "feedback": None}
 
+    def fallback_plan(s: InjState) -> LLMPlan:
+        return templated_plan(s["graph"], s["scored"], max_plan(s["policy"]))
+
     def select(s: InjState) -> InjState:
         if not s.get("use_llm", True):
-            return {"plan": templated_plan(s["graph"], s["scored"]), "source": "fallback:llm_disabled"}
+            alerts.warn("Agent 1 (planner)", "LLM disabled by --no-llm: using the deterministic plan", j, kind="warning")
+            return {"plan": fallback_plan(s), "source": "fallback:llm_disabled"}
         prompt = build_prompt(s["graph"], s["scored"], s.get("history", []), s["policy"], s.get("feedback"))
+        meta: dict = {}
         try:
-            plan = llm.generate_json("injection_select", prompt, LLMPlan, journal=j, call=llm_call)
-            return {"plan": plan, "source": "llm"}
+            plan = llm.generate_json("injection_select", prompt, LLMPlan, journal=j, call=llm_call, meta=meta)
+            return {"plan": plan, "source": llm_source(meta)}
         except llm.LLMUnavailable as exc:
             j.write({"event": "agent1_fallback", "why": str(exc)})
-            return {"plan": templated_plan(s["graph"], s["scored"]), "source": f"fallback:{exc}"}
+            alerts.llm_fallback("Agent 1 (planner)", f"{exc} -> deterministic plan used instead", j)
+            return {"plan": fallback_plan(s), "source": f"fallback:{exc}"}
 
     def check(s: InjState) -> InjState:
         errs = validate(s["plan"], s["graph"], s["scored"])
         if errs:
             j.write({"event": "agent1_invalid", "errors": errs, "source": s["source"]})
-            return {"plan": templated_plan(s["graph"], s["scored"]), "source": "fallback:invalid_plan", "errors": errs}
+            if is_llm(s["source"]):
+                alerts.llm_fallback("Agent 1 (planner)", f"LLM plan failed validation ({'; '.join(errs)[:300]}) "
+                                    "-> deterministic plan used instead", j)
+            return {"plan": fallback_plan(s), "source": "fallback:invalid_plan", "errors": errs}
         return {"errors": []}
 
     def guard(s: InjState) -> InjState:
         plan, verdicts, notes = policy_guard(s["plan"], s["graph"], s["catalog"], s["policy"], s.get("history", []))
         rejected = [v for v in verdicts if v.verdict != "approve"]
-        if rejected and s.get("loops", 0) < MAX_GUARD_LOOPS and s["source"] == "llm":
+        if rejected and s.get("loops", 0) < MAX_GUARD_LOOPS and is_llm(s["source"]):
             fb = "; ".join(f"{v.exp_id}: {v.rationale}" for v in rejected)
             j.write({"event": "agent1_guard_reject", "feedback": fb})
             return {"feedback": fb, "loops": s.get("loops", 0) + 1, "verdicts": verdicts}
@@ -291,6 +331,8 @@ def build_injection_agent(journal: Journal | None = None, llm_call=None):
             plan = LLMPlan(experiments=[e for e in plan.experiments if e.id in keep])
             verdicts = [v for v in verdicts if v.exp_id in keep]
             notes.append(f"dropped rejected experiments: {[v.exp_id for v in rejected]}")
+            alerts.warn("policy guard", "dropped experiments the guard rejected: "
+                        + "; ".join(f"{v.exp_id}: {v.rationale}" for v in rejected), j, kind="warning")
         for n in notes:
             j.write({"event": "guard_note", "note": n})
         j.write({"event": "agent1_plan", "source": s["source"], "plan": plan.model_dump(),

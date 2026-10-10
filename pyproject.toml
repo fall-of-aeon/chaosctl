@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-chaosctl = "chaosctl.cli:app"
+chaosctl = "chaosctl.cli:main"
 
 [build-system]
 requires = ["hatchling"]

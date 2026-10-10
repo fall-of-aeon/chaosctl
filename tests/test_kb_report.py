@@ -122,7 +122,8 @@ def test_blind_fallback_root_cause_comes_from_kb_signatures():
     hits = [{"id": "queue_unreachable", "severity": "Critical", "detail": "x"},
             {"id": "consumers_down", "severity": "High", "detail": "y"}]
     assert "Redis" in d.fallback(hits).root_cause  # higher priority signature wins
-    assert "single clear cause" in d.fallback([{"id": "latency_degradation", "severity": "High", "detail": "z"}]).root_cause
+    assert "slowed down" in d.fallback([{"id": "latency_degradation", "severity": "High", "detail": "z"}]).root_cause
+    assert "single clear cause" in d.fallback([{"id": "duplicates", "severity": "High", "detail": "z"}]).root_cause  # no signature
 
 
 def test_grade_uses_kb_keywords():
@@ -366,17 +367,6 @@ def test_both_report_paths_include_ranking(tmp_path):
         assert "### Resilience ranking (least resilient first)" in md
         assert data["ranking"]["experiments"][0]["exp_ref"] == "r1010-163348/exp-01"
         assert {"score", "verdict"} <= set(data["overall"])
-
-
-def test_dashboard_reads_newest_report(tmp_path, monkeypatch):
-    from chaosctl import dashboard
-    monkeypatch.setattr(dashboard, "ROOT", tmp_path)
-    assert dashboard.resilience() is None                                       # no report yet
-    exps = report.load_run(make_run(tmp_path))
-    report.write(exps, tmp_path / "reports" / "r1010-163348" / "findings.md", use_llm=False)
-    r = dashboard.resilience()
-    assert r["path"] == "reports/r1010-163348/findings.json" and r["ranking"]["experiments"][0]["rank"] == 1
-    assert r["overall"]["score"] == r["ranking"]["experiments"][0]["score"]
 
 
 # ------------------------------------------------------------ AI score: median of samples, calibration memory

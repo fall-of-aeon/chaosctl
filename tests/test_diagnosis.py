@@ -26,3 +26,36 @@ def test_fallback_only_playbook_fixes_and_validator():
     bad = d.Diagnosis(thoughts=[], root_cause="x", failure_chain=[], findings=[],
                       fixes=[d.FixPick(playbook_id="rm -rf /", why="x")])
     assert d.validate(bad, set())
+
+
+def g(root, target, fault="x"):
+    return d.grade({"root_cause": root, "failure_chain": []}, {"target": f"node:{target}", "fault": fault})["root_cause_correct"]
+
+
+def test_grader_is_strict_on_real_llm_answers():
+    # these two were graded CORRECT by the old substring grader
+    assert not g("Postgres disk full (ev:logs:postgres-0) blocked order writes, causing silent failures for W1 "
+                 "clients. Worker restarts followed.", "n8n-worker", "worker_container_kill")
+    assert not g("Postgres disk full caused job write failures, stalling n8n workers and degrading W1 latency while "
+                 "W2 clients remained unaware", "n8n-main", "traffic_spike")      # "remained" is not "main"
+    assert g("The n8n worker container crashed and its active jobs were lost", "n8n-worker")
+    assert g("Postgres disk full (No space left on device) delayed order writes", "postgres", "postgres_disk_full")
+    assert g("A burst of incoming traffic overloaded the queue and workers", "n8n-main", "traffic_spike")
+    assert g("The mock downstream API returned HTTP 500 errors", "mock-api", "mockapi_http_500")
+
+
+def test_quiet_run_may_have_no_fix():
+    quiet = [{"id": "latency_degradation", "severity": "Medium", "detail": "x"}]
+    nofix = d.Diagnosis(thoughts=[], root_cause="no real degradation", failure_chain=[], findings=[], fixes=[])
+    assert d.validate(nofix, set(), quiet=d.is_quiet(quiet)) == []
+    assert d.validate(nofix, set(), quiet=False) == ["no fixes"]
+
+
+def test_no_impact_runs_are_not_graded():
+    diag = {"root_cause": "No degradation detected", "failure_chain": []}
+    plan = {"target": "node:postgres", "fault": "postgres_overload"}
+    assert d.grade(diag, plan, {"timeline": {"saw_symptom": False}})["verdict"] == "NO_IMPACT"
+    assert d.grade(diag, plan, {"timeline": {"saw_symptom": True}})["verdict"] == "MISSED"
+
+    lost = {"timeline": {"saw_symptom": False}, "fates": {"summary": {"lost_silently": 4}}}
+    assert d.grade(diag, plan, lost)["verdict"] == "MISSED"          # silent loss is impact

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chaosctl live impact</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar" aria-label="Status">
+  <span class="brand">chaosctl</span>
+  <span class="mono chip" id="run-id" title="run id">-</span>
+  <span class="conn" id="conn" role="status" aria-live="polite"><span class="dot"></span><span>Connecting</span></span>
+  <span class="kv"><span class="k">Campaign</span> <span class="mono" id="campaign">-</span></span>
+  <span class="kv"><span class="k">Kill switch</span> <span id="killswitch">-</span></span>
+  <span class="kv"><span class="k">Load</span> <span id="loadgen">-</span></span>
+  <span class="spacer"></span>
+  <span class="k">Window</span>
+  <span class="seg" role="group" aria-label="Chart window">
+    <button data-win="120">2 min</button><button data-win="180" aria-pressed="true">3 min</button><button data-win="300">5 min</button>
+  </span>
+</header>
+
+<div class="alerts" id="alerts" role="alert" hidden></div>
+<nav class="phases" aria-label="Demo phase">
+  <ol id="phases"></ol>
+  <span class="caption" id="phase-caption"></span>
+</nav>
+
+<main>
+  <section class="row-map" id="sec-map">
+    <div class="card map-card">
+      <div class="card-head">
+        <h2>System map</h2>
+        <span class="caption">Arrow points to what the component depends on. Dashed line: logical dependency.
+          <span class="legend-blast">Amber dashed outline</span>: <span class="term" tabindex="0" title="Blast radius: every component that depends on the target, directly or through others, so it can be affected when the target fails.">blast radius</span>.</span>
+        <span class="caption right" id="exp-caption"></span>
+      </div>
+      <svg id="map" role="group" aria-label="System dependency map" preserveAspectRatio="xMidYMin meet"></svg>
+      <div class="strip" id="wf-strip" aria-label="Workflows"></div>
+      <div class="timeline" id="timeline" aria-label="Experiment timeline"></div>
+    </div>
+    <aside class="card detail" id="detail" aria-label="Component detail" aria-live="polite"></aside>
+  </section>
+
+  <section class="card" id="sec-metrics" aria-label="Live metrics">
+    <div class="card-head"><h2>Live metrics</h2><span class="caption" id="metrics-caption">rates over the last 5 s, sampled every second</span></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="charts">
+      <figure class="chart"><figcaption><span class="title">Client latency: W1 p95</span><span class="hover" id="h-lat"></span></figcaption><svg id="c-lat" role="img" aria-label="W1 p95 latency over time"></svg></figure>
+      <figure class="chart"><figcaption><span class="title">Throughput and errors</span><span class="hover" id="h-tp"></span></figcaption><svg id="c-tp" role="img" aria-label="Requests per second over time"></svg></figure>
+      <figure class="chart"><figcaption><span class="title">Redis queue: jobs waiting vs active</span><span class="hover" id="h-q"></span></figcaption><svg id="c-q" role="img" aria-label="Queue depth over time"></svg></figure>
+    </div>
+    <div class="legend" id="chart-legend"></div>
+  </section>
+
+  <section class="card" id="sec-agent1" aria-label="Agent 1 decision"></section>
+  <section class="card" id="sec-impact" aria-label="Impact and result"></section>
+  <section class="card" id="sec-agent2" aria-label="Agent 2 diagnosis"></section>
+  <section class="card" id="sec-resil" aria-label="Resilience score and ranking"></section>
+
+  <details class="card drawer" id="sec-events">
+    <summary><h2>Event log</h2><span class="caption" id="events-count"></span></summary>
+    <div class="filters" role="group" aria-label="Filter by source">
+      <button data-src="k8s" aria-pressed="true">Kubernetes</button>
+      <button data-src="harness" aria-pressed="true">Harness</button>
+      <button data-src="safety" aria-pressed="true">Safety</button>
+    </div>
+    <div class="scroll"><table class="events"><thead><tr><th>Time</th><th>T+</th><th>Source</th><th>Message</th></tr></thead><tbody id="events"></tbody></table></div>
+  </details>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

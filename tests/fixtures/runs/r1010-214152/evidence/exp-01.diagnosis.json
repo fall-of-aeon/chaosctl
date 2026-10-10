@@ -1,0 +1,53 @@
+{
+  "source": "llm",
+  "detectors": [
+    {
+      "id": "lost_work",
+      "severity": "Critical",
+      "detail": "1 in-flight requests never produced a row (1 after a 200 OK)"
+    }
+  ],
+  "thoughts": [
+    {
+      "step": "observe",
+      "text": "An n8n worker pod was killed during the trace (K8S EVENTS: Killing n8n-worker-6cd6854ff5-8nqkn)."
+    },
+    {
+      "step": "observe",
+      "text": "The deterministic detector reports '1 in-flight requests never produced a row (1 after a 200 OK)'."
+    },
+    {
+      "step": "hypothesize",
+      "text": "The worker was terminated while processing a job, leading to a lost in-flight task because graceful shutdown or proper signal handling was not maintained."
+    },
+    {
+      "step": "check",
+      "text": "The fates section indicates one 'lost_silently' execution resulting from the worker termination."
+    },
+    {
+      "step": "conclude",
+      "text": "Failing to maintain proper graceful shutdown during worker lifecycle events causes in-flight jobs to be lost silently without writing to Postgres."
+    }
+  ],
+  "root_cause": "Termination of the n8n worker pod without graceful shutdown handling causes in-flight execution jobs to be lost silently.",
+  "failure_chain": [
+    "A worker pod is scheduled for termination by Kubernetes.",
+    "The container receives a stop signal without proper graceful shutdown configuration or completion handling.",
+    "The active in-flight job execution is abruptly cut off.",
+    "The job fails to complete its database write, resulting in lost work."
+  ],
+  "findings": [
+    {
+      "title": "Lost in-flight work during worker termination",
+      "evidence": [
+        "lost_work"
+      ]
+    }
+  ],
+  "fixes": [
+    {
+      "playbook_id": "graceful_shutdown",
+      "why": "Ensures active jobs finish processing or are safely returned to the queue before the worker container exits."
+    }
+  ]
+}

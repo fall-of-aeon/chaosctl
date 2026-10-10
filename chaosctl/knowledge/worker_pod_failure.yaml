@@ -1,0 +1,25 @@
+# Knowledge for catalog fault worker_pod_failure (format: docs/KNOWLEDGE_BASE.md)
+fault: worker_pod_failure
+title: Worker pod failure (hung worker)
+category: compute_loss
+summary: 'Chaos Mesh swaps one worker''s container for a pause image for 30-60 s: the worker stops working but stays
+  Ready.'
+hypothesis: the failed worker stays Ready (no readiness signal), its active jobs stall until lock expiry and are
+  redelivered to the other worker; W1 p95 rises
+symptoms:
+  expected:
+  - latency_degradation
+  possible:
+  - consumers_down
+  - queue_backlog
+  - lost_work
+  - duplicates
+  - detectability_gap
+grading_keywords:
+- worker
+- consumer
+- hung
+related_fixes:
+- worker_health_probe
+- stalled_job_tuning
+- scale_workers

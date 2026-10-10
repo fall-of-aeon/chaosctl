@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from chaosctl import alerts
 from chaosctl.journal import Journal, NullJournal
 
 STATE_DIR = Path("state")
@@ -140,6 +141,7 @@ def recovery_watchdog(pods_fn: Callable[[], dict], nodes: list[str], deadline_s:
             restart_fn(n)
         except Exception as exc:
             journal.write({"event": "watchdog_restart_error", "node": n, "err": str(exc)[:200]})
+            alerts.warn("recovery watchdog", f"could not restart {n}: {type(exc).__name__}: {str(exc)[:200]}", journal)
     t1 = time.monotonic()
     bad = unready()
     while bad and time.monotonic() - t1 < restart_grace_s:
@@ -207,8 +209,10 @@ class SafetyController(threading.Thread):
             self.heartbeat = time.monotonic()
             try:
                 self._tick()
-            except Exception as exc:  # the monitor itself must not die
+            except Exception as exc:  # the monitor itself must not die, but it must say so
                 self.journal.write({"event": "safety_tick_error", "err": f"{type(exc).__name__}: {exc}"[:200]})
+                alerts.warn_once(f"safety_tick:{type(exc).__name__}", "safety controller",
+                                 f"a safety check failed: {type(exc).__name__}: {str(exc)[:200]}", self.journal)
             self._stop.wait(self.tick_s)
 
     def _tick(self) -> None:
@@ -260,3 +264,5 @@ class SafetyController(threading.Thread):
             self.on_abort(reason)
         except Exception as exc:
             self.journal.write({"event": "abort_handler_error", "err": str(exc)[:200]})
+            alerts.warn("safety controller", f"abort handler failed (load may still be running): "
+                        f"{type(exc).__name__}: {str(exc)[:200]}", self.journal)
