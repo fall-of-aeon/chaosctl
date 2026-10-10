@@ -14,6 +14,41 @@ console = Console()
 ROOT = Path(__file__).parents[1]
 
 
+@app.callback()
+def _main(require_llm: bool = typer.Option(False, "--require-llm",
+                                           help="fail instead of falling back when the LLM cannot be used "
+                                                "(same as CHAOSCTL_REQUIRE_LLM=1)")):
+    """chaosctl: AI-driven chaos engineering for n8n. Any fallback or harness error is printed when it
+    happens and again in a summary at exit."""
+    import atexit
+    import os
+
+    from chaosctl import alerts
+    if require_llm:
+        os.environ["CHAOSCTL_REQUIRE_LLM"] = "1"
+    atexit.register(alerts.print_summary)
+
+
+def main() -> None:
+    from chaosctl.alerts import LLMRequired
+    try:
+        app()
+    except LLMRequired as exc:
+        Console(stderr=True).print(f"[bold red]STOPPED: {exc}[/bold red]")
+        raise SystemExit(2) from None
+
+
+def _print_plan(state: dict) -> None:
+    """Where the plan came from, said out loud (a fallback was already alerted; repeat it here)."""
+    src = state.get("plan_source") or "?"
+    color = "green" if src.startswith("llm:api") else "yellow" if src.startswith("llm:cache") else "bold red"
+    label = {"green": "LLM (live call)", "yellow": "LLM (cached answer from an earlier identical prompt)"}.get(
+        color, "DETERMINISTIC FALLBACK - the LLM did not choose this plan")
+    console.print(f"[{color}]Agent 1 plan source: {label}[/{color}] [dim]({src})[/dim]")
+    for e in (state.get("plan").experiments if state.get("plan") else []):
+        console.print(f"  {e.id} {e.fault} -> {e.target} ({e.rung})")
+
+
 def _script(name: str, *args: str) -> None:
     raise typer.Exit(subprocess.call([str(ROOT / "scripts" / name), *args]))
 
@@ -155,7 +190,7 @@ def plan(dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run"),
     j = Journal(ROOT / "reports" / "plans" / "journal.jsonl")
     out = build_injection_agent(j).invoke({"graph": g, "catalog": load_catalog(), "policy": load_policy(),
                                            "history": load_history(), "use_llm": llm})
-    console.print(f"[bold]Plan source:[/bold] {out['source']}")
+    _print_plan({"plan_source": out["source"], "plan": None})
     for n in out.get("notes", []):
         console.print(f"[yellow]guard:[/yellow] {n}")
     verdicts = {v.exp_id: v for v in out["verdicts"]}
@@ -172,7 +207,7 @@ def plan(dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run"),
 
 
 @app.command()
-def run(exp: list[str] = typer.Option(None, help="E1 (worker kill) / E2 (redis kill); repeatable"),
+def run(exp: list[str] = typer.Option(None, help="E1 (worker kill) / E2 (redis kill) or any catalog fault id; repeatable"),
         auto: bool = typer.Option(False, help="run the whole planned campaign"),
         approve: bool = typer.Option(False, help="ask before each injection"),
         llm: bool = typer.Option(True, "--llm/--no-llm"),
@@ -183,7 +218,7 @@ def run(exp: list[str] = typer.Option(None, help="E1 (worker kill) / E2 (redis k
 
     names = {"E1": "worker_pod_kill", "E2": "redis_pod_kill"}
     if not exp and not auto:
-        raise typer.BadParameter("give --exp E1/E2 or --auto")
+        raise typer.BadParameter("give --exp E1/E2/<fault id> or --auto")
     only = None if auto else [names.get(e, e) for e in exp]
     policy = load_policy()
     if queue_abort is not None:
@@ -202,6 +237,10 @@ def run(exp: list[str] = typer.Option(None, help="E1 (worker kill) / E2 (redis k
         runner.loadgen.stop()
         runner.ctl.stop()
     (runner.dir / "results.json").write_text(json.dumps(state.get("results", []), indent=2, default=str))
+    _print_plan(state)
+    if not state.get("results"):
+        console.print("[bold red]No experiment ran (empty plan). See the warnings above.[/bold red]")
+        raise typer.Exit(1)
     for r in state.get("results", []):
         console.rule(f"{r['exp_id']} {r['fault']} -> {r['target']}: {r['status']}")
         for k in ("skip_reason", "abort_reason", "recovery_time_s", "manual_action_needed", "restarts_delta"):
@@ -236,6 +275,7 @@ def demo(queue_abort: int = typer.Option(None, help="strict queue limit to show 
         runner.loadgen.stop()
         runner.ctl.stop()
     (runner.dir / "results.json").write_text(json.dumps(state.get("results", []), indent=2, default=str))
+    _print_plan(state)
     res = (state.get("results") or [None])[0]
     if not res:
         console.print("[red]Agent 1 produced no runnable experiment.[/red]")
@@ -366,7 +406,11 @@ def diagnose(run: str = typer.Option(None, help="run id (default: newest)"), exp
         console.print(f"   [{'red' if h['severity'] in ('Critical', 'High') else 'yellow'}]{h['severity']:<8}[/] "
                       f"{h['id']}: {h['detail']}")
         time.sleep(pace / 3)
-    console.print(f"\n[bold]2. Reasoning[/bold] [dim]({out['source']})[/dim]")
+    if out["llm_used"]:
+        console.print(f"\n[bold]2. Reasoning[/bold] [green](LLM: {out['source']})[/green]")
+    else:
+        console.print(f"\n[bold]2. Reasoning[/bold] [bold red](NOT the LLM - pre-written template built from the "
+                      f"detector hits; {out['source']})[/bold red]")
     colors = {"observe": "cyan", "hypothesize": "magenta", "check": "yellow", "conclude": "green"}
     for i, t in enumerate(out["thoughts"], 1):
         console.print(f"   [{colors.get(t['step'], 'white')}]{t['step']:>11}[/] │ {t['text']}")
@@ -382,10 +426,15 @@ def diagnose(run: str = typer.Option(None, help="run id (default: newest)"), exp
         console.print(f"      verify: {pb['verify']}")
     plan_p = rdir / "evidence" / f"{exp}.plan.json"
     if plan_p.exists():
-        g = grade(out, json.loads(plan_p.read_text()))
+        g = grade(out, json.loads(plan_p.read_text()), bundle)
+        shown = {"CORRECT": "[green]CORRECT[/green]", "MISSED": "[red]MISSED[/red]",
+                 "NO_IMPACT": "[yellow]NOT GRADED: the harness saw no measurable impact, so there was no failure "
+                              "to find[/yellow]"}[g["verdict"]]
         console.print(f"\n[bold]5. Grading (after the fact):[/bold] injected {g['fault']} on {g['actual_target']} → "
-                      f"blind root cause {'[green]CORRECT[/green]' if g['root_cause_correct'] else '[red]MISSED[/red]'}")
+                      f"blind root cause {shown}"
+                      + ("" if out["llm_used"] else " [bold red](graded the TEMPLATE diagnosis, not the LLM: does not "
+                                                    "count as an Agent 2 result)[/bold red]"))
 
 
 if __name__ == "__main__":
-    app()
+    main()

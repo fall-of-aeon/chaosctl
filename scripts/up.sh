@@ -45,6 +45,7 @@ REDIS_MANIFEST=k8s/redis.yaml
 [ "$PROFILE" = hardened ] && REDIS_MANIFEST=k8s/redis-hardened.yaml
 kubectl --context $CTX apply -f k8s/postgres.yaml -f "$REDIS_MANIFEST" -f k8s/mock-api.yaml -f k8s/n8n-nodeport.yaml
 $K rollout status statefulset/postgres --timeout=180s
+scripts/pg_small_disk.sh   # small real disk for the postgres_disk_full fault (never fills the laptop)
 $K rollout status deployment/redis --timeout=120s
 $K rollout status deployment/mock-api --timeout=120s
 

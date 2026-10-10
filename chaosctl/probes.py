@@ -101,6 +101,10 @@ class K8sProbe:
             from chaosctl.kube import api_client
             core = client.CoreV1Api(api_client())
         self.core = core
+        self.errors: list[str] = []   # collection failures; the runner copies these into the evidence bundle
+
+    def _err(self, what: str, exc: Exception) -> None:
+        self.errors.append(f"{what}: {type(exc).__name__}: {str(exc)[:120]}")
 
     def pods(self) -> dict:
         """graph node -> {ready, pods:[{name, uid, phase, ready, restarts}]}."""
@@ -108,6 +112,7 @@ class K8sProbe:
         try:  # one API call for all workloads (keeps load off the API server)
             all_pods = self.core.list_namespaced_pod(NAMESPACE, _request_timeout=3).items
         except Exception as exc:
+            self._err("list pods", exc)
             return {node: {"ready": None, "err": type(exc).__name__, "pods": []} for node in WORKLOAD_SELECTORS}
         for node, sel in WORKLOAD_SELECTORS.items():
             want = dict(kv.split("=") for kv in sel.split(","))
@@ -127,7 +132,8 @@ class K8sProbe:
     def events_since(self, since_ts: float) -> list[dict]:
         try:
             items = self.core.list_namespaced_event(NAMESPACE, _request_timeout=3).items
-        except Exception:
+        except Exception as exc:
+            self._err("list events", exc)
             return []
         out = []
         for e in items:
@@ -138,12 +144,40 @@ class K8sProbe:
                             "message": (e.message or "")[:200]})
         return sorted(out, key=lambda x: x["ts"])
 
-    def logs(self, pod: str, lines: int = 50) -> list[str]:
+    def exec(self, pod: str, command: list[str], container: str | None = None) -> str:
+        """Run a read-only command in a pod (preflight checks). Raises on failure."""
+        from kubernetes.stream import stream
+        kw = {"container": container} if container else {}
+        return stream(self.core.connect_get_namespaced_pod_exec, pod, NAMESPACE, command=command,
+                      stderr=True, stdin=False, stdout=True, tty=False, _request_timeout=10, **kw)
+
+    def logs(self, pod: str, lines: int = 50, since_ts: float | None = None, until_ts: float | None = None,
+             previous: bool = False) -> list[str]:
+        """Pod log lines; with since_ts/until_ts only lines logged inside that window (by the kubelet's
+        timestamp), so evidence never carries errors from before the experiment."""
+        from datetime import datetime
+        window = since_ts is not None or until_ts is not None
         try:
-            text = self.core.read_namespaced_pod_log(pod, NAMESPACE, tail_lines=lines, _request_timeout=5)
-        except Exception:
+            kw = ({"since_seconds": max(1, int(time.time() - since_ts) + 5)} if since_ts is not None
+                  else {} if window else {"tail_lines": lines})
+            text = self.core.read_namespaced_pod_log(pod, NAMESPACE, timestamps=window, previous=previous,
+                                                     _request_timeout=15, **kw)
+        except Exception as exc:
+            if not previous:   # no previous container is normal; anything else is a collection failure
+                self._err(f"logs {pod}", exc)
             return []
-        return text.splitlines()
+        if not window:
+            return text.splitlines()
+        out = []
+        for line in text.splitlines():
+            stamp, _, msg = line.partition(" ")
+            try:  # 2026-10-11T01:30:22.123456789Z -> keep microseconds
+                ts = datetime.fromisoformat(stamp.rstrip("Z")[:26] + "+00:00").timestamp()
+            except ValueError:
+                continue
+            if (since_ts is None or ts >= since_ts) and (until_ts is None or ts <= until_ts):
+                out.append(msg)
+        return out[-lines:]
 
 
 # ---------------------------------------------------------------- fate table

@@ -65,6 +65,28 @@ class LoadGen:
     def set_profile(self, profile: str) -> None:
         self.rate = PROFILES[profile]
 
+    def spike(self, rate_rps: float, duration_s: float) -> None:
+        """Traffic spike fault: raise the request rate for duration_s, then go back on its own."""
+        self.end_spike()
+        self._base_rate = self.rate
+        self.rate = rate_rps
+        self._spike_timer = threading.Timer(duration_s, self.end_spike)
+        self._spike_timer.daemon = True
+        self._spike_timer.start()
+
+    def end_spike(self) -> None:
+        t = getattr(self, "_spike_timer", None)
+        if t is not None:
+            t.cancel()
+            self._spike_timer = None
+        base = getattr(self, "_base_rate", None)
+        if base is not None:
+            self.rate, self._base_rate = base, None
+
+    @property
+    def spiking(self) -> bool:
+        return getattr(self, "_base_rate", None) is not None
+
     @property
     def running(self) -> bool:
         return bool(self._thread and self._thread.is_alive() and not self._stop.is_set())

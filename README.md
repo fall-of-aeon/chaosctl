@@ -149,7 +149,9 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
    - (b) Mistral picks, with a reason that cites graph IDs and a hypothesis.
    - (c) A validator rejects anything not in the catalog or citing unknown IDs. On rejection, a deterministic plan is used.
    - (d) The **policy guard** computes the blast radius, sets abort limits (stricter only), and enforces the risk-tier
-     rule: **a tier-3 experiment (Redis) only after a tier-1 experiment (worker) has passed.**
+     rule: **a tier-3 experiment (Redis/Postgres/n8n-main kill) only after a tier-1 experiment has passed.**
+   - At most 6 experiments per plan (`policy.yaml` `max_experiments_per_plan`); the deterministic plan lets nodes take
+     turns and uses each fault's gentlest rung. `--exp <fault id>` restricts the candidates instead.
 3. **Pre-flight checks.** The experiment is skipped if any one fails:
    - The right cluster (`kind-chaos`)
    - All pods Ready
@@ -165,7 +167,9 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
 4. **Warm-up:** 60 s of steady load (2 orders/s). Must be healthy, or the experiment is **skipped**.
 5. **In-flight gate:** wait until ≥ 3 W1 requests are in flight and ≥ 1 job is active, then record exactly which requests
    are in flight. Timeout after 90 s means the experiment is skipped (we never inject blind).
-6. **Inject:** create one Chaos Mesh `PodChaos` (`pod-kill`, `mode: one`, `gracePeriod: 0`) from the catalog template.
+6. **Inject:** create one Chaos Mesh resource (`PodChaos`, `NetworkChaos` or `HTTPChaos`, always `mode: one`) from the
+   catalog template. See **2.6** for the full catalog. Reversible faults end on their own after their duration; the
+   run does not count SLIs as recovered before that.
 7. **Observe** (up to 175 s): every second, record latency, errors, queue and pod health. The safety controller checks its limits
    every second in its own thread:
    - error rate
@@ -195,8 +199,19 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
 - Our Chaos Mesh client builds resources **only from catalog templates** and re-checks the result:
   - namespace `n8n-chaos`
   - `mode: one`
-  - capped duration for reversible faults
+  - capped duration for reversible faults; every fault except `pod-kill` must be reversible
+  - a NetworkChaos peer (`target`) also pinned to `n8n-chaos`
+  - ladder values checked before they are spliced into YAML; CPU/memory/clock-offset caps
+  - Jobs: allow-listed image only, run once, no host namespaces, no privileges, no service-account token, only
+    allow-listed PVCs, deadline ≤ max duration, pgbench clients capped; load spike capped at 10 req/s
   - labels `chaosctl=managed`
+- **Nothing degrades silently** (`chaosctl/alerts.py`). Whenever the LLM is not used (no key, quota, timeout, invalid
+  answer) or the harness cannot do something (evidence collection, safety check, chaos clean-up), it prints a red
+  panel at that moment, writes a `degraded` event to the journal and `state/degraded.jsonl`, shows a red banner on the
+  dashboard, and repeats everything in a summary when the command exits. Plans and diagnoses are labelled
+  `llm:api:<model>`, `llm:cache:<model>` (replayed answer to an identical prompt) or `fallback:<reason>`; a fallback
+  diagnosis is never graded as an Agent 2 result. **`chaosctl --require-llm ...`** (or `CHAOSCTL_REQUIRE_LLM=1`)
+  makes any LLM fallback stop the command with exit code 2 instead.
 - The harness refuses to run if `kubectl`'s current context is not **`kind-chaos`**.
 - **Kill switch, 3 ways:**
   - `chaosctl kill`
@@ -207,41 +222,95 @@ Each experiment injects **exactly one fault, exactly once**. Nothing runs unless
 - Active run info is saved in `state/active_run.json`, so `chaosctl recover` works even if the runner crashed.
 - Every decision and action is written to an append-only journal: `reports/<run-id>/journal.jsonl`.
 
-## 2.6 The dashboard (`chaosctl dashboard` → http://127.0.0.1:8787)
 
-**Top to bottom:**
-1. **Step bar**: Map → Baseline → Agent 1 decides → Inject → Impact/auto-stop → Recover → Agent 2 diagnoses. The current
-   step is highlighted, with a plain-English sentence to read aloud.
-2. **System map**: services and data-flow arrows. Green/red = live health. 💥 = Agent 1's target. Dashed orange = blast radius.
-3. **Agent 1 panel**: the menu of allowed experiments with scores, the pick (✅), the reason, the prediction and the safety limits.
-4. **Service tiles**: Ready / Not ready, plus restart counts.
-5. **Headline numbers**: W1 completed/s, W1 p95 (× baseline), W2 accepted/s, queue waiting.
-6. **Charts**:
-   - W1 p95 latency vs the baseline line
-   - throughput: W1 completed vs **W2 still "accepted"** (the silent failure) vs W1 errors
-   - Redis queue: waiting vs active
-   - markers on every chart: inject / pod ready / AUTO-STOP / recovered / end
-7. **Experiment panel** (fault, why, hypothesis, auto-stop reason, recovery time, timeline) and the **fate table**.
-8. **Agent 2 panel**: its reasoning steps, root cause and recommended fixes.
-9. **"Ask Agent 2" chat** (RAG):
-   - (a) Searches ~80 small records: run results, diagnoses, Kubernetes events, log lines, the fix playbook and `docs/` (FACTS, PROGRESS, JUDGES_GUIDE), using BM25 keyword search.
-   - (b) Mistral answers only from those records and must cite them.
-   - (c) If Mistral is down, the chat shows the matching records instead.
+## 2.6 Failure catalog (`chaosctl/catalog.yaml`)
+Chaos Mesh provides most fault *types*; the catalog decides which n8n component each one may hit, how hard (a ladder
+of rungs, gentlest first), its risk tier, and its maximum duration. Agent 1 only picks `(fault, target, rung)` from
+this list; it never writes YAML. Three drivers: **Chaos Mesh** CRs, Kubernetes **Jobs** we run from an allow-listed
+image (load and disk ballast), and our own **load generator** (traffic spike).
 
-   The chat is **not** blind (it can see results) and is advisory only.
+| Failure type (organizers' list) | Fault id | How | Target | Rungs | Tier |
+|---|---|---|---|---|---|
+| Service / container crash | `worker_pod_kill` | PodChaos pod-kill | n8n-worker | grace 0 s | 1 |
+| | `worker_graceful_kill` | PodChaos pod-kill | n8n-worker | grace 30 s | 1 |
+| | `worker_container_kill` | PodChaos container-kill | n8n-worker | restart in place | 1 |
+| | `worker_pod_failure` | PodChaos pod-failure | n8n-worker | 30 s, 60 s | 1 |
+| | `main_pod_kill`, `redis_pod_kill`, `postgres_pod_kill` | PodChaos pod-kill | SPOFs | grace 0 s | 3 |
+| Slow or lossy network | `redis_latency`, `postgres_latency` | NetworkChaos delay | redis / postgres | 100 ms - 2 s for 45 s | 2 |
+| | `packet_loss` | NetworkChaos loss | redis, postgres or mock-api | 10 %, 30 % for 45 s | 2 |
+| | `mockapi_latency` | HTTPChaos delay | mock-api `/work` | +2 s, +10 s, +30 s (past the 30 s timeout) | 2 |
+| Full disk | `postgres_disk_full` | Job: ballast file fills the **real** postgres disk (512 MiB loop disk, see below) | postgres | 4 MiB left, completely full; 40 s | 3 |
+| Overloaded database | `postgres_overload` | Job: `pgbench` in the cluster | postgres | 4 or 8 CPU-heavy clients; 85 of 100 connections held; 45 s | 2 |
+| Failed dependency | `mockapi_http_500` | HTTPChaos replace code | mock-api `/work` | 500 for 30 s, 503 for 60 s | 1 |
+| | `mockapi_http_abort` | HTTPChaos abort | mock-api `/work` | 30 s | 1 |
+| | `mockapi_container_kill` | PodChaos container-kill | mock-api | restart in place | 1 |
+| | `worker_redis_partition` | NetworkChaos partition | one worker ↔ redis | 20 s, 60 s (reaches the 60 s Bull lock) | 2 |
+| Sudden traffic spike | `traffic_spike` | our load generator | n8n-main (webhooks) | 2 → 6 or 10 req/s for 60 s | 2 |
+| *(off)* | `worker_cpu_stress`, `worker_memory_stress` | StressChaos | n8n-worker | disabled: Kind cgroup v2 issue (3.5) | - |
+| *(off)* | `worker_clock_skew` | TimeChaos | n8n-worker | disabled: flaky ptrace into Node.js (3.5) | - |
+| *(test)* | `pod_failure` | PodChaos pod-failure | worker | kill-switch test only | - |
+
+**Full disk without risking the laptop.** The postgres volume is a hostPath on the Kind node, i.e. on the laptop's disk
+(~1 TB free), so filling it directly is not an option, and Chaos Mesh's IOChaos (fake `ENOSPC`) does not work on this
+Kind setup. `scripts/pg_small_disk.sh` (run by `up.sh`) puts postgres's data on a 512 MiB loop-mounted ext4 file inside
+the Kind node. The fault's Job writes a ballast file until that disk is full, holds it, and deletes it when it ends;
+`delete_all` also runs a cleanup Job. Three guards: preflight refuses unless postgres's filesystem is ≤ 1 GiB, the Job
+itself refuses on a disk > 1 GiB, and the Job may only mount that one PVC. After a Kind node restart, run the script
+again (it remounts the existing disk image).
+
+**Every injection is verified.** After creating a fault the runner checks it really took effect (Chaos Mesh
+`AllInjected` / the Job's pod running). If not, the experiment is marked `inject_failed` (never "passed") and an alert
+is raised.
+
+Left out on purpose: DNSChaos (Chaos Mesh installed without its DNS server), JVMChaos (n8n is Node.js), IOChaos (its
+injector dies on this Kind setup), Kernel/Block chaos (on a single-node Kind cluster they can take down the node),
+cloud and physical-machine chaos.
+
+## 2.7 The dashboard (`chaosctl dashboard` → http://127.0.0.1:8787)
+
+Read-only: it has no button that injects a fault or triggers the kill switch. `chaosctl dashboard --replay <run-id>`
+plays a recorded run from `reports/<run-id>/` instead (header chip "Replay"); the page code is the same in both modes.
+
+**Top to bottom (the order of the demo):**
+1. **Top bar**: run id, connection (Live / Stale / Disconnected / Replay), campaign state, kill switch (armed / triggered),
+   load generator, chart window (2 / 3 / 5 min).
+2. **Phase strip**: Map, Baseline, Agent 1 decides, Inject, Impact and auto-stop, Recover, Agent 2 diagnoses, driven by the
+   run journal.
+3. **System map** (built from the dependency graph, nothing hardcoded): zones Clients, n8n application, Queue and data,
+   External dependency, plus a muted platform lane (namespace, Chaos Mesh, Prometheus, Grafana). Arrows point to what a
+   component depends on. Each node shows one derived state (Healthy, Degraded, Down, Recovering; rule in
+   `chaosctl/dash/model.py`), pods Ready and its own live metric. During an experiment: a fault marker on the target with
+   the pod Chaos Mesh hit, T+seconds and phase, an arrow from Chaos Mesh, an amber outline on the blast radius and
+   "first symptom T+N s" under each node when the harness observed it. Under the map: a workflow strip (W1 / W2 in plain
+   words) and the BUILD_PLAN 11.1 timeline with the recovery time. Click a node for its detail panel.
+4. **Live metrics**: five tiles and three charts on one time axis with inject / symptom / recovered / auto-stop markers
+   and a band while the fault is active. "-" means no data; "Load generator off" is never shown as 0.
+5. **Agent 1 decision**: chosen experiment, reason, cited graph ids, hypothesis, guard verdict, and where the decision
+   came from (LLM model from the journal, cached, or rule-based fallback), plus the candidates table.
+6. **Impact and result**: summary and fate table of the in-flight requests.
+7. **Agent 2 blind diagnosis**: reasoning, root cause, ranked fixes with runbooks, offline grade.
+8. **Event log**: Kubernetes events and journal events, merged and redacted.
+
+**API** (all GET, one collector thread samples once per second and serves every browser): `/api/graph`, `/api/state`,
+`/api/components`, `/api/metrics?window=s`, `/api/events?since=ts`, `/api/agent1`, `/api/experiments/<id>`,
+`/api/stream` (Server-Sent Events; the page falls back to polling every 2 s). `POST /api/chat` (the RAG chat) is
+still served for scripts but no longer shown on the page.
 
 **Where the dashboard's data comes from:**
 
 | On screen | Source | Stored |
 |---|---|---|
-| Orders, errors, latency | our load generator records every request | `state/loadgen.sqlite` |
-| Queue waiting/active | Redis, live | not stored |
-| Pod health, restarts | Kubernetes API, live | not stored |
-| Markers, Agent 1 choice | run journal | `reports/<run-id>/journal.jsonl` (+ `reports/plans/` for `plan`) |
-| Fate table, timeline | written when a run ends | `reports/<run-id>/results.json` |
+| Orders, errors, latency, load on/off | our load generator records every request | `state/loadgen.sqlite` |
+| Queue waiting/active, key count | Redis via NodePort, live | not stored |
+| Reconciliation gap | Postgres (read-only probe user) via NodePort, live | not stored |
+| mock-api delay / error rate | mock-api `GET /admin` via NodePort | not stored |
+| Pods, restarts, events, Chaos Mesh resources | Kubernetes API, live | not stored |
+| Map nodes and edges, SPOF, blast radius | live cluster via `Graph.build`, every 30 s (else `graph.json`) | `graph.json` |
+| Phases, fault marker, Agent 1 choice | run journal | `reports/<run-id>/journal.jsonl` (+ `reports/plans/`) |
+| Fate table, timeline, recovery time | written when an experiment ends | `reports/<run-id>/evidence/<exp-id>.json` |
 | Agent 2 reasoning | written by `diagnose` | `reports/<run-id>/evidence/*.diagnosis.json` |
 
-The dashboard keeps the last 5 minutes of chart points in memory.
+The dashboard keeps 15 minutes of 1 s points and the newest 600 events in memory.
 
 ---
 
@@ -297,6 +366,9 @@ uv run chaosctl demo                    # judge demo: Agent 1 picks ONE experime
 uv run chaosctl demo --queue-abort 20   # same, with a strict queue limit to show the automatic stop
 uv run chaosctl run --exp E1            # E1 = worker pod kill
 uv run chaosctl run --exp E2            # E2 = Redis pod kill (only allowed after a passed E1)
+uv run chaosctl run --exp redis_latency # any catalog fault id (2.6); repeatable
+uv run python scripts/chaos_smoke.py    # live check of every fault driver, no load (~4 min)
+uv run chaosctl --require-llm demo      # fail instead of falling back if Mistral cannot be used
 uv run chaosctl diagnose                # Agent 2 on the newest run (or: --run r1010-163829)
 uv run chaosctl kill                    # KILL SWITCH (or: touch KILL, or Ctrl-C in the run)
 uv run chaosctl recover --ack           # clean up after a crash; clears LOCKED
@@ -317,6 +389,10 @@ uv run chaosctl killswitch-test         # kill switch acceptance test, 3× each 
 - **Repeated faults on the same pod** push it into CrashLoopBackOff (Kubernetes back-off), and recovery gets slower.
   Fix with `kubectl -n n8n-chaos rollout restart deploy/n8n-worker`.
 - `chaosctl up` resets the worker count to 1 (Helm values). Re-apply step 5 afterwards.
+- **StressChaos and TimeChaos are unreliable on Kind (cgroup v2)**: after one StressChaos the target container is left
+  in a deleted cgroup and the next Stress/TimeChaos on that pod fails; TimeChaos ptrace into Node.js is flaky and once
+  crashed a worker (SIGSEGV). These faults are in the catalog but disabled (`known_issue`). Restart the worker
+  Deployment after trying them.
 - `kubectl` must point at `kind-chaos` (`kubectl config use-context kind-chaos`), or the harness refuses to run.
 - **Mistral rate limits** (HTTP 429) on the free "Experiment" plan. Calls are retried with back-off, then the fallback
   model is tried; if both fail, Agent 1, Agent 2 and the chat silently use their deterministic fallbacks (the dashboard
@@ -344,7 +420,7 @@ chaosctl/                  the Python package (the "harness")
   probes.py                Redis/Postgres/Kubernetes probes + fate classification
   llm.py                   Mistral wrapper: cache, retries, fallback model, budget, secret redaction
   rag.py                   "Ask Agent 2" chat: corpus, BM25 retrieval, cited answers
-  dashboard.py / .html     live dashboard server and page
+  dash/                    live dashboard: sources (live/replay), hub (collector), model (pure rules), server, static page
   journal.py, kube.py      audit journal; Kubernetes client pinned to kind-chaos
 scripts/                   cluster-up/down, up/down, bootstrap, kind-config, llm_smoke
 k8s/                       namespace, postgres, redis (+ hardened: AOF + PVC), mock-api, n8n NodePort
@@ -370,7 +446,7 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 | 1 | **T1a cluster** | Kind + monitoring + Chaos Mesh up. Accepted: pod-failure auto-restored after its duration; a non-annotated namespace was protected. |
 | 2 | **T1b app** | n8n queue mode, Postgres, Redis, mock-api; W1/W2 return 200 and write orders. Docker Desktop crashed once (memory) during deploy; recovered. |
 | 3 | **T2 dependency graph** | Discovered from the live cluster (including hostnames hidden in a ConfigMap) + overlay. Blast radius, SPOFs and criticality match the plan. |
-| 4 | **T3 fault catalog + Chaos Mesh client** | Worker kill, Redis kill, and a reversible pod-failure for kill-switch tests; refuses anything else. |
+| 4 | **T3 fault catalog + Chaos Mesh client** | Worker kill, Redis kill, and a reversible pod-failure for kill-switch tests; refuses anything else. Later extended to 15 enabled faults over PodChaos/NetworkChaos/HTTPChaos (2.6). |
 | 5 | **T4a baseline** | 3 orders/s overloaded one worker (queue kept growing), so steady load is **2 orders/s**: W1 100 %, p95 4.7 s, queue flat. |
 | 6 | **T4b safety + kill switch** | Kill-switch test 9 runs: chaos removed in 1-3 s **every time**; 7/9 within the 60 s worker-Ready target. The 2 slow ones were caused by CrashLoopBackOff from 9 faults in a row on one pod. |
 | 7 | **T5/T6 Agent 1 + guard** | Gemini plan cites real graph IDs; the guard puts E1 before E2 and gates E2 on a passed E1. |
@@ -425,7 +501,7 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 
 | Priority | Task | Notes |
 |---|---|---|
-| **Must** | **2+ more failure types** (we only have "pod crash") | E3 `load_spike` (our load generator at 2-3×); E4 `net_delay` on mock-api (Chaos Mesh NetworkChaos) and/or mock-api errors (`POST /admin` on mock-api). Add them to `catalog.yaml` as `enabled: true`; Agent 1's menu then has real choices |
+| ~~Must~~ Done | ~~2+ more failure types~~ | 18 enabled faults covering all 6 failure types on the organizers' list (2.6), each smoke-tested live; see PROGRESS.md for the end-to-end runs. Agent 2's detectors were written for pod kills and may need tuning for the new faults |
 | **Must** | **Findings report** (`chaosctl report` → `reports/<run>/findings.md`) | Command does not exist yet. Content: environment, experiments with reason, hypothesis vs observed, ranked weaknesses, fixes from Agent 2, resilience score |
 | **Must** | **Resilience score** (deterministic) | Weights: availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 % |
 | **Must** | Architecture one-pager, demo video (≤ 3 min), team form | The team form lists Mistral (model names), LangGraph, Chaos Mesh, Prometheus, Grafana, Kind, n8n; data = synthetic only |

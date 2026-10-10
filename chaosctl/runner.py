@@ -15,8 +15,9 @@ from pathlib import Path
 
 import yaml
 
+from chaosctl import alerts as safety_alerts
 from chaosctl import safety
-from chaosctl.chaos.chaosmesh import ChaosMesh, load_catalog
+from chaosctl.chaos.chaosmesh import ChaosMesh, duration_s, load_catalog, render
 from chaosctl.journal import Journal
 from chaosctl.kube import NAMESPACE
 from chaosctl.loadgen import LoadGen, LoadStats
@@ -143,6 +144,8 @@ class Runner:
             problems.append("existing chaosctl-managed chaos resources")
         if fault not in self.catalog["faults"] or target not in self.catalog["targets"]:
             problems.append("fault/target not in catalog")
+        elif self.catalog["faults"][fault].get("requires") == "small_pg_disk":
+            problems += self._check_small_pg_disk()
         if not self.redis.sample().get("reachable"):
             problems.append("redis probe unreachable")
         if not self.pg.sample().get("reachable"):
@@ -153,6 +156,18 @@ class Runner:
             problems.append("safety controller unhealthy")
         self.journal.write({"event": "preflight", "target": target, "fault": fault, "problems": problems})
         return problems
+
+    def _check_small_pg_disk(self) -> list[str]:
+        """postgres_disk_full must only ever fill the small loop disk, never the laptop's disk."""
+        try:
+            out = self.k8s.exec("postgres-0", ["df", "-Pk", "/var/lib/postgresql/data"], container="postgres")
+            total_kb = int(out.strip().splitlines()[-1].split()[1])
+        except Exception as exc:  # noqa: BLE001 - reported as a preflight problem
+            return [f"cannot check the postgres disk size: {type(exc).__name__}: {str(exc)[:120]}"]
+        if total_kb > 1048576:
+            return [f"postgres data is on a {total_kb // 1024} MiB filesystem, not the small chaos disk: "
+                    "run scripts/pg_small_disk.sh first"]
+        return []
 
     def baseline_stable(self, seconds: float = 30) -> tuple[bool, dict]:
         t = time.time()
@@ -239,19 +254,36 @@ class Runner:
 
         ctl.transition(State.INJECTING)
         t_inject = ctl.t_inject
-        cr = self.chaos.create(fault, target, rung, self.run_id, allow_test_only=bool(entry.get("test_only")))
+        if entry.get("driver") == "loadgen":   # traffic spike: our load generator is the fault
+            cr = render(self.catalog, fault, target, rung, self.run_id)
+            self.loadgen.spike(float(cr["spec"]["rate_rps"]), duration_s(cr))
+            self.journal.write({"event": "chaos_create", "name": cr["metadata"]["name"], "fault": fault,
+                                "target": target, "rung": rung, "run_id": self.run_id, "spec": cr["spec"]})
+            injected = (True, f"load generator at {cr['spec']['rate_rps']} req/s for {duration_s(cr)}s")
+        else:
+            cr = self.chaos.create(fault, target, rung, self.run_id, allow_test_only=bool(entry.get("test_only")))
+            injected = self.chaos.verify_injected(cr)
         res["chaos_name"] = cr["metadata"]["name"]
+        res["injection"] = {"ok": injected[0], "detail": injected[1]}
+        self.journal.write({"event": "injection_check", "ok": injected[0], "detail": injected[1]})
+        if not injected[0]:
+            safety_alerts.warn(f"{exp_id} {fault}", f"the fault was created but NOT confirmed as injected "
+                               f"({injected[1]}). This experiment will be marked inject_failed, not passed.",
+                               self.journal)
         self.journal.write({"event": "inject", "t": t_inject, "in_flight": {k: len(v) for k, v in inflight.items()},
                             "queue": got["queue"]})
         ctl.transition(State.OBSERVING)
 
-        timeline = self._observe(ctl, target, target_uids, t_inject, th, entry)
+        old_restarts = {p["uid"]: p["restarts"] for p in pods_before[target]["pods"]}
+        timeline = self._observe(ctl, target, target_uids, t_inject, th, entry, fault_s=duration_s(cr),
+                                 old_restarts=old_restarts)
 
         # recovery
         if ctl.state == State.OBSERVING:
             ctl.transition(State.RECOVERY_WAIT)
         else:
             ctl.state = State.RECOVERY_WAIT
+        self.loadgen.end_spike()
         self.chaos.delete_all(self.run_id)
         apps, wl = _apps_api(), workloads()
         wd = safety.recovery_watchdog(self.k8s.pods, sorted(WORKLOAD_SELECTORS), th.recovery_deadline_s,
@@ -282,7 +314,12 @@ class Runner:
 
         pods_after = self.k8s.pods()
         restarts_after = {n: sum(p["restarts"] for p in v["pods"]) for n, v in pods_after.items()}
-        status = "aborted" if ctl.aborted else "completed"
+        status = "aborted" if ctl.aborted else "completed" if injected[0] else "inject_failed"
+        if status == "completed" and not timeline.get("t_slis_recovered"):
+            status = "unrecovered"
+            safety_alerts.warn(f"{exp_id} {fault}", "SLIs did not return to baseline (or the target was never seen "
+                               f"Ready again) within the {th.max_total_s - 5:.0f}s observation window: marked "
+                               "'unrecovered', not passed", self.journal)
         res.update({
             "status": status, "abort_reason": ctl.abort_reason, "thresholds": asdict(th),
             "timeline": {k: (round(v - t_inject, 1) if isinstance(v, float) and k != "t_inject" else v)
@@ -302,7 +339,7 @@ class Runner:
         return res
 
     def _observe(self, ctl: SafetyController, target: str, old_uids: list[str], t_inject: float,
-                 th: Thresholds, entry: dict) -> dict:
+                 th: Thresholds, entry: dict, fault_s: int = 0, old_restarts: dict | None = None) -> dict:
         b = self.baseline or {}
         b_p95 = b.get("w1", {}).get("p95_ms") or 5000
         b_sr = b.get("w1", {}).get("success_rate") or 1.0
@@ -320,8 +357,10 @@ class Runner:
             q = s["queue"]
             w1 = s["w1"]
             pods = self.k8s.pods()
-            target_ready_new = any(p["ready"] and not p["deleting"] and p["uid"] not in old_uids
-                                   for p in pods[target]["pods"])
+            # back = a replacement pod is Ready, or (container-kill) the same pod restarted and is Ready again
+            target_ready_new = any(p["ready"] and not p["deleting"] and (
+                p["uid"] not in old_uids or p["restarts"] > (old_restarts or {}).get(p["uid"], p["restarts"]))
+                for p in pods[target]["pods"])
             if entry.get("reversible"):
                 target_ready_new = pods[target]["ready"]
             symptom = ((w1["error_rate"] or 0) > 0 or (w1["p95_ms"] or 0) > 1.5 * b_p95
@@ -333,9 +372,11 @@ class Runner:
             saw_symptom = saw_symptom or symptom
             if target_ready_new and tl["t_pod_ready"] is None:
                 tl["t_pod_ready"] = now
-            if tl["t_pod_ready"] and q.get("reachable") and q.get("wait", 0) <= b_wait + 5 and tl["t_queue_drained"] is None:
+            if (now >= t_inject + fault_s and tl["t_pod_ready"] and q.get("reachable") and q.get("wait", 0) <= b_wait + 5
+                    and tl["t_queue_drained"] is None):   # a reversible fault's backlog only drains after it ends
                 tl["t_queue_drained"] = now
-            sli_ok = (tl["t_pod_ready"] is not None and w1["n"] >= 3 and (w1["success_rate"] or 0) >= b_sr - 0.1
+            # a reversible fault is still active until its duration ends: no recovery before that
+            sli_ok = (now >= t_inject + fault_s and tl["t_pod_ready"] is not None and w1["n"] >= 3 and (w1["success_rate"] or 0) >= b_sr - 0.1
                       and (w1["p95_ms"] or 0) <= 1.1 * b_p95 and q.get("reachable") and q.get("wait", 0) <= b_wait + 5)
             if sli_ok:
                 healthy_since = healthy_since or now
@@ -362,26 +403,46 @@ class Runner:
 
     def _write_evidence(self, res: dict, samples: list[dict], t_inject: float) -> None:
         """Evidence bundle for the blind diagnosis agent: no plan/chaos spec inside."""
-        logs = {}
-        for node, v in self.k8s.pods().items():
-            for p in v["pods"]:
-                lines = [l for l in self.k8s.logs(p["name"], 200) if any(w in l.lower() for w in ("error", "warn", "fail", "redis", "lost", "stalled"))]
-                logs[p["name"]] = lines[-50:]
-        from chaosctl.llm import redact
-        logs = {k: [redact(l) for l in v] for k, v in logs.items()}
+        api_errors_during_run = list(self.k8s.errors)
+        self.k8s.errors.clear()
+        logs = collect_logs(self.k8s, t_inject - 30, time.time())
         bundle = {
             "exp_id": res["exp_id"], "baseline": self.baseline,
             "trace": [{"t": round(s["ts"] - t_inject, 1), "w1": s.get("w1"), "w2": s.get("w2"), "queue": s.get("queue"),
                        "pods": s.get("pods"), "w1_pending": s.get("w1_pending")} for s in samples if s["ts"] >= t_inject - 30],
             "events": self.k8s.events_since(t_inject - 30), "logs": logs,
+            "collection_errors": [f"during observation ({len(api_errors_during_run)}x): {e}"
+                                  for e in sorted(set(api_errors_during_run))] + list(self.k8s.errors),
             "fates": res["fates"], "timeline": res["timeline"], "restarts_delta": res["restarts_delta"],
             "recovery_time_s": res["recovery_time_s"], "manual_action_needed": res["manual_action_needed"],
             "status": res["status"],
         }
+        if bundle["collection_errors"]:
+            safety_alerts.warn(f"evidence {res['exp_id']}", "Kubernetes API calls failed; the evidence (and Agent 2's "
+                               "input) is incomplete: " + "; ".join(bundle["collection_errors"])[:400], self.journal)
+        self.k8s.errors.clear()
         (self.dir / "evidence" / f"{res['exp_id']}.json").write_text(json.dumps(bundle, indent=2, default=str))
         (self.dir / "evidence" / f"{res['exp_id']}.plan.json").write_text(json.dumps(
             {k: res.get(k) for k in ("fault", "target", "rung", "chaos_name", "at_inject", "thresholds", "abort_reason")},
             indent=2, default=str))
+
+
+LOG_WORDS = ("error", "warn", "fail", "redis", "lost", "stalled", "space", "panic", "timeout", "refused")
+
+
+def collect_logs(k8s, since_ts: float, until_ts: float) -> dict[str, list[str]]:
+    """Interesting log lines from every workload pod, only from [since_ts, until_ts]. A container that
+    restarted during the run also contributes its previous instance's lines (prefixed)."""
+    from chaosctl.llm import redact
+    logs = {}
+    for node, v in k8s.pods().items():
+        for p in v["pods"]:
+            lines = k8s.logs(p["name"], 200, since_ts=since_ts, until_ts=until_ts)
+            if p["restarts"]:
+                prev = k8s.logs(p["name"], 200, since_ts=since_ts, until_ts=until_ts, previous=True)
+                lines = [f"[previous container] {ln}" for ln in prev] + lines
+            logs[p["name"]] = [redact(ln) for ln in lines if any(w in ln.lower() for w in LOG_WORDS)][-50:]
+    return logs
 
 
 # ------------------------------------------------------------ baseline
