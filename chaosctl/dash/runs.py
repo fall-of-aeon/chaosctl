@@ -275,7 +275,7 @@ class Run:
     def markers(self, abort, deleted, tl) -> list[dict]:
         out = []
         if self.t_inject:
-            out.append({"key": "inject", "label": "\U0001F4A5 inject", "rel_s": 0.0})
+            out.append({"key": "inject", "label": "inject", "rel_s": 0.0})
         if isinstance(tl.get("t_pod_ready"), (int, float)):
             out.append({"key": "pod_ready", "label": "pod ready", "rel_s": tl["t_pod_ready"]})
         if abort:

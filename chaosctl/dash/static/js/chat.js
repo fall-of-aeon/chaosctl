@@ -83,7 +83,7 @@ async function send(raw) {
 
 function answerHTML(r) {
   const who = r.llm_used === false
-    ? `<p class="warnline">Warning: The LLM was not used: these are only the matching records.</p>`
+    ? `<p class="warnline">Warning: the LLM was not used. These are only the matching records.</p>`
     : `<p class="who">answered by ${esc(String(r.source || "").replace(/^llm:/, ""))}</p>`;
   const srcs = (r.sources || []).map((s) =>
     `<div class="src${s.this_run ? " mine" : ""}" data-src tabindex="0" role="button" aria-label="Show source ${esc(s.id)}">

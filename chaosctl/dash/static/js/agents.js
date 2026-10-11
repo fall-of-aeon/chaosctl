@@ -2,7 +2,7 @@
 // Every write goes to /api/agent1/*, /api/kill*, /api/traffic, /api/agent2/* (chaosctl/dash/control.py, watcher.py).
 import {$, esc, DASH, nice, plain, pct, secs, tsec, clock, pill, sourceBadge} from "./util.js";
 
-const A = {ctrl: null, a2: null, busy: false, err: null, open: new Set(), sig1: "", sig2: ""};
+const A = {ctrl: null, a2: null, busy: false, err: null, open: new Set(), sig1: "", sig2: "", sig3: ""};
 
 export async function post(path, body = {}) {
   const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Chaosctl": "1"}, body: JSON.stringify(body)});
@@ -60,26 +60,33 @@ function paint(force) {
   // repaint only what changed, so open <details> and scroll positions survive the 1 s stream
   const s1 = JSON.stringify([A.ctrl, A.busy, A.err, A.state?.campaign, A.state?.experiment?.t_inject && Math.round(A.state.now - A.state.experiment.t_inject)]);
   if (force || s1 !== A.sig1) { A.sig1 = s1; $("agent1-live").innerHTML = agent1Html(); }
-  const s2 = JSON.stringify([A.a2, A.busy, [...A.open]]);
-  if (force || s2 !== A.sig2) {
-    A.sig2 = s2;
-    const panel = $("agent2-live");
-    const incident = panel.querySelector(".incident")?.dataset.incidentId;
-    const scrolls = new Map([...panel.querySelectorAll("[data-scroll-key]")].map((el) =>
-      [el.dataset.scrollKey, {top: el.scrollTop, left: el.scrollLeft}]));
-    const focusedScroll = panel.contains(document.activeElement) ? document.activeElement?.dataset.scrollKey : null;
-    const recentOpen = panel.querySelector("details.recent")?.open;
-    panel.innerHTML = agent2Html();
-    if (incident && incident === panel.querySelector(".incident")?.dataset.incidentId) {
-      panel.querySelectorAll("[data-scroll-key]").forEach((el) => {
-        const pos = scrolls.get(el.dataset.scrollKey);
-        if (pos) { el.scrollTop = pos.top; el.scrollLeft = pos.left; }
-        if (focusedScroll === el.dataset.scrollKey) el.focus({preventScroll: true});
-      });
-    }
-    const recent = panel.querySelector("details.recent");
-    if (recent && recentOpen != null) recent.open = recentOpen;
+  // Agent 2: the status header changes every second (checked_at, streak); the investigation transcript only
+  // when a step arrives. Repainting them separately keeps the transcript still while the user scrolls it.
+  const panel = $("agent2-live");
+  if (!panel.querySelector("[data-a2=head]")) { panel.innerHTML = `<div data-a2="head"></div><div data-a2="body"></div>`; A.sig2 = A.sig3 = ""; }
+  const s2 = JSON.stringify([A.a2 && {...A.a2, current: null, recent: null, bundle_job: null}, A.busy]);
+  if (force || s2 !== A.sig2) { A.sig2 = s2; panel.querySelector("[data-a2=head]").innerHTML = agent2Head(); }
+  const s3 = JSON.stringify([A.a2?.available && [A.a2.current, A.a2.recent, A.a2.bundle_job], [...A.open]]);
+  if (force || s3 !== A.sig3) { A.sig3 = s3; paintIncident(panel.querySelector("[data-a2=body]")); }
+}
+
+/** repaint the investigation, keeping scroll positions and focus; a stepper scrolled to the end follows new steps */
+function paintIncident(body) {
+  const incident = body.querySelector(".incident")?.dataset.incidentId;
+  const scrolls = new Map([...body.querySelectorAll("[data-scroll-key]")].map((el) =>
+    [el.dataset.scrollKey, {top: el.scrollTop, left: el.scrollLeft, end: el.scrollTop + el.clientHeight >= el.scrollHeight - 8}]));
+  const focused = body.contains(document.activeElement) ? document.activeElement?.dataset.scrollKey : null;
+  const recentOpen = body.querySelector("details.recent")?.open;
+  body.innerHTML = agent2Body();
+  if (incident && incident === body.querySelector(".incident")?.dataset.incidentId) {
+    body.querySelectorAll("[data-scroll-key]").forEach((el) => {
+      const pos = scrolls.get(el.dataset.scrollKey);
+      if (pos) { el.scrollTop = pos.end && el.dataset.scrollKey === "steps" ? el.scrollHeight : pos.top; el.scrollLeft = pos.left; }
+      if (focused === el.dataset.scrollKey) el.focus({preventScroll: true});
+    });
   }
+  const recent = body.querySelector("details.recent");
+  if (recent && recentOpen != null) recent.open = recentOpen;
 }
 
 // ------------------------------------------------------------------ Agent 1
@@ -158,7 +165,7 @@ const A2_STATE = {
   watching: ["ok", "", "watching"], suspicious: ["warn", "!", "symptom seen, confirming"], investigating: ["a2", "", "investigating"],
   concluded: ["a2", "", "diagnosed"], "re-arming": ["muted", "", "re-arming"], paused: ["muted", "‖", "paused"],
 };
-function agent2Html() {
+function agent2Head() {
   const a = A.a2;
   if (!a || !a.available) return `<p class="muted">Agent 2 runs with the live dashboard only.</p>`;
   const [k, i, w] = A2_STATE[a.state] || ["muted", "?", a.state];
@@ -166,17 +173,22 @@ function agent2Html() {
   const watch = bad.length ? `<p><b>Now:</b> ${bad.map(([n, why]) => `<b>${esc(n)}</b> ${esc(why.join(", "))}`).join("; ")}
       ${a.state === "suspicious" ? `<span class="muted"> (${a.streak}/${a.trigger_ticks} s before it investigates)</span>` : ""}</p>`
     : `<p class="muted">Every service healthy. Checked ${a.checked_at ? clock(a.checked_at) : DASH}; investigates on its own when a service stays Down or Degraded for ${a.trigger_ticks} s.${a.rearm_in_s != null ? ` Re-arms in ${a.rearm_in_s} s.` : ""}</p>`;
+  return `<div class="chart-head"><h2><span class="eyebrow a2">Agent 2</span> Diagnosis, always on</h2><span>${pill("a2", "", "blind")} ${pill(k, i, w)}</span></div>
+    ${watch}
+    <div class="a-actions"><button class="toggle" data-ag="investigate" ${A.busy || a.state === "investigating" ? "disabled" : ""}>Investigate now</button>
+      <button class="toggle" data-ag="a2pause" data-paused="${a.enabled ? "1" : "0"}" ${A.busy ? "disabled" : ""}>${a.enabled ? "Pause auto-trigger" : "Resume auto-trigger"}</button></div>
+    ${a.error ? `<p class="muted">Watcher error: ${esc(a.error)}</p>` : ""}`;
+}
+
+function agent2Body() {
+  const a = A.a2;
+  if (!a || !a.available) return "";
   const cur = a.current;
   const bj = a.bundle_job;
   const bundle = bj ? `<p class="muted" style="margin-top:8px">Full evidence diagnosis of <span class="mono">${esc(bj.run_id)}/${esc(bj.exp)}</span>:
       ${bj.status === "running" ? "running…" : bj.status === "done" ? `done (${esc(String(bj.source || "").startsWith("llm") ? "LLM" : "rule-based fallback")}) · <a href="?run=${esc(bj.run_id)}/${esc(bj.exp)}#story" data-open-run="${esc(bj.run_id)}/${esc(bj.exp)}">graded in the story</a>` : `failed: ${esc(bj.error)}`}</p>` : "";
   const recent = (a.recent || []).filter((r) => !cur || r.id !== cur.id).slice(0, 4);
-  return `<div class="chart-head"><h2><span class="eyebrow a2">Agent 2</span> Diagnosis, always on</h2><span>${pill("a2", "", "blind")} ${pill(k, i, w)}</span></div>
-    ${watch}
-    <div class="a-actions"><button class="toggle" data-ag="investigate" ${A.busy || a.state === "investigating" ? "disabled" : ""}>Investigate now</button>
-      <button class="toggle" data-ag="a2pause" data-paused="${a.enabled ? "1" : "0"}" ${A.busy ? "disabled" : ""}>${a.enabled ? "Pause auto-trigger" : "Resume auto-trigger"}</button></div>
-    ${a.error ? `<p class="muted">Watcher error: ${esc(a.error)}</p>` : ""}
-    ${cur ? incidentHtml(cur) : ""}${bundle}
+  return `${cur ? incidentHtml(cur) : ""}${bundle}
     ${recent.length ? `<details class="recent"><summary class="muted">Earlier investigations (${recent.length})</summary><ul>${recent.map((r) =>
       `<li><span class="mono">${esc(clock(r.started))}</span> ${esc((r.services || []).join(", ") || "health check")}: ${esc(plain(r.root_cause || r.status))}</li>`).join("")}</ul></details>` : ""}`;
 }
