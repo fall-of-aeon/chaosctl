@@ -232,12 +232,12 @@ export function swimlane(host, rows, x, opts = {}) {
     }
     for (const mk of r.marks || []) {
       if (mk.t == null || mk.t < x[0] || mk.t > x[1]) continue;
-      g += `<text x="${X(mk.t)}" y="${y + 27}" text-anchor="middle" style="font:700 15px var(--body);fill:var(--text)">${mk.kind === "restart" ? "↻" : "+"}<title>${esc(mk.label)} at ${tsec(mk.t)}</title></text>`;
+      g += `<text x="${X(mk.t)}" y="${y + 27}" text-anchor="middle" style="font:700 15px var(--body);fill:var(--text)">${mk.kind === "restart" ? "R" : "+"}<title>${esc(mk.label)} at ${tsec(mk.t)}</title></text>`;
     }
   });
   if (opts.cursor != null) g += `<line x1="${X(opts.cursor)}" x2="${X(opts.cursor)}" y1="0" y2="${H - 20}" style="stroke:var(--a1);stroke-width:2"/>`;
   const legend = ["Ready", "NotReady", "Terminating", "Pending", "CrashLoopBackOff"].map((k) =>
     `<span><i style="background:${col[k]};width:12px;height:12px;display:inline-block;border-radius:2px"></i> ${k === "NotReady" ? "not ready" : k}</span>`).join(" ");
   host.innerHTML = `<svg style="width:100%;height:${H}px" role="img" aria-label="Pod readiness over time">${g}</svg>
-    <div class="legend muted">${legend}<span>↻ restart</span></div>`;
+    <div class="legend muted">${legend}<span>R = restart</span></div>`;
 }

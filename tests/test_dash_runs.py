@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from chaosctl import fix_summary, llm
+from chaosctl import fix_summary, llm, report, score
 from chaosctl.dash import model, runs, server, sources
 
 FIX = Path(__file__).parent / "fixtures" / "runs"
@@ -25,6 +25,34 @@ def reports(tmp_path, monkeypatch):
 def api(path, **q):
     body, status = server.run_api(path, lambda k, d: q.get(k, d))
     return body, status
+
+
+def test_report_api_uses_formula_for_legacy_ai_report(reports):
+    exp = report.load_run(reports / RUN)[0]
+    expected = score.score_experiment(exp["bundle"], exp["result"])
+    legacy = {"source": "llm", "runs": [RUN], "overall": {"score": 1},
+              "ranking": {"experiments": [{"exp_ref": f"{RUN}/exp-01", "title": "Worker kill", "score": 1}]},
+              "experiments": [{"exp_ref": f"{RUN}/exp-01", "headline": "Worker kill",
+                               "ai_score": {"total": 1}, "reference_score": expected}],
+              "summary": {"weaknesses": [{"title": "Lost work"}], "fixes": []}}
+    (reports / "findings.json").write_text(json.dumps(legacy))
+    data, status = api("/api/report")
+    assert status == 200 and data["score_method"] == "formula"
+    assert data["overall"]["score"] == expected["total"]
+    assert data["ranking"]["experiments"][0]["score"] == expected["total"]
+    assert data["experiments"][0]["score"] == expected
+    assert data["weaknesses"][0]["title"] == "Lost work"
+    assert json.loads((reports / "findings.json").read_text()) == legacy  # read-only compatibility
+
+
+def test_legacy_report_without_formula_score_is_recomputed_from_run_evidence(reports):
+    exp = report.load_run(reports / RUN)[0]
+    legacy = {"source": "llm", "runs": [RUN], "overall": {"score": 1},
+              "ranking": {"experiments": [{"exp_ref": f"{RUN}/exp-01", "score": 1}]},
+              "experiments": [{"exp_ref": f"{RUN}/exp-01", "ai_score": {"total": 1}}]}
+    (reports / "findings.json").write_text(json.dumps(legacy))
+    data, _ = api("/api/report")
+    assert data["overall"]["score"] == score.score_experiment(exp["bundle"], exp["result"])["total"]
 
 
 def test_runs_list_one_entry_per_experiment(reports):

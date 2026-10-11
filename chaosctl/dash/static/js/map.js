@@ -1,5 +1,5 @@
 // System map: built from /api/graph (nodes, edges, layout), never hardcoded. Per node: name, health pill
-// (icon + word), one key number. Roles go to a hover tooltip. During a fault: 💥 on the target, amber outline
+// (icon + word), one key number. Roles go to a hover tooltip. During a fault: a FAULT marker on the target, amber outline
 // on the blast radius, red edge for network faults between two services.
 import {$, esc} from "./util.js";
 
@@ -37,8 +37,8 @@ export function buildMap(g) {
 }
 const cid = (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, "_");
 
-const PILL = {ok: ["✓", "healthy", "var(--ok)"], warn: ["!", "degraded", "var(--warn)"], bad: ["✕", "down", "var(--fault)"],
-              rec: ["↻", "recovering", "var(--warn)"], none: ["?", "no data", "var(--faint)"], client: ["", "", "var(--muted)"]};
+const PILL = {ok: ["", "healthy", "var(--ok)"], warn: ["!", "degraded", "var(--warn)"], bad: ["", "down", "var(--fault)"],
+              rec: ["", "recovering", "var(--warn)"], none: ["?", "no data", "var(--faint)"], client: ["", "", "var(--muted)"]};
 
 /** view: {nodes: {name: {health: ok|warn|bad|rec|none, key: "queue 0"}}, fault: {target, edge, active, label}, blast: [names]} */
 export function updateMap(view) {
@@ -79,7 +79,7 @@ export function updateMap(view) {
     const e = f.edge ? L.edges.find((x) => x.id === f.edge) : null;
     const [cx, cy] = e ? e.mid : n ? [n.x + n.w - 20, n.y + 4] : [null, null];
     if (cx != null) {
-      o += `<circle class="boom-ring" cx="${cx}" cy="${cy}" r="22"/><text x="${cx}" y="${cy + 9}" text-anchor="middle" style="font-size:24px" aria-hidden="true">\u{1F4A5}</text>
+      o += `<circle class="boom-ring" cx="${cx}" cy="${cy}" r="22"/><text x="${cx}" y="${cy + 4}" text-anchor="middle" style="font-size:12px" aria-hidden="true">FAULT</text>
         <text class="boom" x="${cx}" y="${cy - 30}" text-anchor="middle">${esc(f.label)}</text>`;
     }
   }

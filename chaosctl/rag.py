@@ -60,7 +60,7 @@ def build_corpus() -> list[dict]:
             ref = e.get("exp_ref")
             if not ref or not e.get("headline"):
                 continue
-            score = (e.get("ai_score") or {}).get("total")
+            score = (e.get("score") or e.get("reference_score") or {}).get("total")
             add(f"report:{ref}", f"Findings report on {ref}",
                 f"Report analysis of {ref} (resilience score {score}). Headline: {e.get('headline')}. "
                 f"Expected vs observed: {e.get('expected_vs_observed')}. Impact: {e.get('impact')}. "
@@ -190,7 +190,7 @@ QUESTION: {question}"""
                 "run": run_ref(run) and run}
     except llm.LLMUnavailable as exc:
         alerts.llm_fallback("Ask Agent 2 (chat)", f"{exc} -> showing retrieved records only, no generated answer")
-        return {"answer": f"⚠ The LLM was NOT used ({exc}). These are only the most relevant records I found:",
+        return {"answer": f"Warning: The LLM was NOT used ({exc}). These are only the most relevant records I found:",
                 "sources": [_src(h) for h in hits[:4]], "source": f"fallback: {exc}", "llm_used": False}
 
 

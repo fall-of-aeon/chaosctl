@@ -317,7 +317,7 @@ function renderRail() {
   }
   let cur = 0; ACTS.forEach(([k], i) => { if (reached[k]) cur = i; });
   $("rail").innerHTML = ACTS.map(([k, label, actor], i) => `<li class="${i === cur ? "now" : reached[k] && i < cur ? "done" : ""}" style="--actor:var(--${actor})">
-    <a href="#act-${k}" data-scroll="act-${k}">${reached[k] && i < cur ? "✓ " : ""}${esc(label)}<span class="st">${i === cur ? "now" : reached[k] ? "done" : "not yet"}</span></a></li>`).join("");
+    <a href="#act-${k}" data-scroll="act-${k}">${esc(label)}<span class="st">${i === cur ? "now" : reached[k] ? "done" : "not yet"}</span></a></li>`).join("");
   $("rail").querySelectorAll("[data-scroll]").forEach((a) => a.onclick = (ev) => { ev.preventDefault(); $(a.dataset.scroll).scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"}); });
 }
 

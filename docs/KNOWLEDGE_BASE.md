@@ -69,13 +69,13 @@ e.g. pgbench or the disk ballast) and `driver: loadgen` (the traffic spike). See
 
 **Agent 2 writes it** (`chaosctl/agents/reporter.py`, Mistral), in two steps:
 1. Per experiment: headline, why Agent 1 chose it, expected vs observed, customer impact, recovery, root cause
-   (and whether the blind diagnosis was right), cited evidence ids, and a 0-100 score per component with a reason.
+   (and whether the blind diagnosis was right), cited evidence ids, and the formula-calculated component scores with measured inputs.
 2. Across experiments: executive summary, environment, weaknesses ranked by severity, fix priorities, overall
    score, limitations.
 
 The facts it gets are what the run recorded: timeline, order fates, trace measurements, detectors, Agent 1's plan,
 the guard verdict, the blind diagnosis and the knowledge entry (plus the key outcomes as plain sentences).
-Same pattern as the other agents, the AI writes and judges and code checks:
+The AI writes the narrative, the harness calculates the scores, and code checks the output:
 - **Validators** (hard; up to 2 retries with the errors as feedback): evidence ids must exist, fixes must be in
   `playbook.yaml`, all five components scored 0-100 or null, weaknesses ordered by severity, overall score between
   the lowest and highest experiment score.
@@ -95,40 +95,35 @@ weakest component, plus the five components ranked weakest first by their mean o
 "Resilience score and ranking" panel shows the newest `findings.json`. No fix needs to be applied: the ranking compares
 faults against the same, unfixed system (before/after a fix is the on-hold Agent 3 idea).
 
-## Resilience score (AI-judged, formula as reference)
-The resilience score shown in the report and on the dashboard is **Agent 2's judgement**
-(`chaosctl/agents/reporter.py`, `judge_scores`):
+## Resilience score (calculated from recorded measurements)
 
-1. **Evidence:** Agent 2 gets the experiment's measured facts (timeline, order fates, latency, queue, restarts,
-   detectors) and scores each component 0-100 with a reason that cites the numbers.
-2. **Reference, not rule:** it also gets the formula score (`chaosctl/score.py`) as a reference. It may depart from
-   it, but must say why in the reason.
-3. **Calibration on real runs:** every experiment Agent 2 scores is stored in `state/score_memory.jsonl`. When it
-   scores a new one, the most similar earlier judgements (same fault first, then most recent) are shown to it as
-   calibration examples, so its scoring stays consistent as real experiments accumulate. This is in-context
-   calibration, not model training: there is far too little data to fine-tune a model, and none is needed.
-4. **Stability:** it scores each experiment 3 times independently (different seeds, temperature 0.5) and the median
-   per component is used. The report shows the spread between the judgements.
-5. **Arithmetic in code:** the total is the weighted mean of the median component scores (weights in
-   `chaosctl/scoring.yaml`); the overall score is the mean of the experiments. Small models get weighted sums wrong.
+Every resilience report and dashboard uses the deterministic component values from `chaosctl/score.py`.
+Agent 2 receives those fixed scores when writing its findings and recommendations. Report generation no
+longer makes model scoring calls or writes new score-calibration memory.
 
-| | Component (weight) | What Agent 2 judges |
+```text
+R = 0.30*A + 0.25*S + 0.20*L + 0.15*D + 0.10*M
+```
+
+| Component | Weight | Formula and measured inputs |
 |---|---|---|
-| A | availability (30 %) | share of W1 requests that succeeded after injection |
-| S | self-recovery (25 %) | recovered without help, and how fast (~30 s excellent; watchdog restart poor; LOCKED 0) |
-| L | latency (20 %) | how far peak W1 p95 rose above baseline relative to the abort limit |
-| D | data integrity (15 %) | share of in-flight orders completed exactly once |
-| M | detectability (10 %) | did health checks show the problem (green during an outage = 0) |
+| A: availability | 30% | 100 × successful W1 responses / all W1 responses across post-injection trace samples |
+| S: self-recovery | 25% | 100 for recovery within 30 s, decreasing linearly to 70 at the deadline; 60 when SLIs remain degraded, 40 for watchdog intervention, 0 for failed recovery |
+| L: latency | 20% | 100 at peak p95 ≤ 1.5 × baseline; 0 at the abort limit; linear interpolation between them |
+| D: data integrity | 15% | 100 × completed-once orders / all recorded in-flight orders |
+| M: detectability | 10% | 0 for a detectability gap; 100 when health checks reflect a consumer/queue outage; unavailable otherwise |
 
-Bands: ≥ 85 resilient, ≥ 70 degraded but recovered, ≥ 50 fragile, below failing. Every component's reason, the
-reference value and the measured evidence are side by side in the report, so each number is traceable; a note
-appears when Agent 2's total differs from the reference by more than 20 points.
+Each component ranges from 0 to 100. Unavailable components are excluded, rather than counted as zero:
+`R = sum(weight × component) / sum(available weights)`. For example, if M is unavailable, the weighted
+sum of A, S, L and D is divided by 0.90. The report shows measured weight coverage and the explanation
+for each component. The overall score is the arithmetic mean of scored experiments; skipped experiments
+are unscored. Bands: ≥85 resilient, ≥70 degraded but recovered, ≥50 fragile, below 50 failing.
 
-**Reference formulas** (`score.py`; also the score of the deterministic draft when Mistral is unavailable):
-A = successful/all W1 responses; S = 100 within 30 s → 70 at the deadline, 60 if SLIs never recovered, 40 watchdog
-restart, 0 LOCKED; L = 100 at ≤ 1.5× baseline p95 → 0 at the abort limit; D = completed once / in-flight; M = 0 if
-`detectability_gap`, 100 if a consumer/queue outage was visible, else n/a. A component without data is n/a and the
-other weights are rescaled. The score is a judgement on this testbed, not a certified reliability measure.
+JSON includes `score_method: formula`, `score_formula`, `score_weights`, and each experiment's `score`.
+AI-written and deterministic-draft reports use identical scores for the same recorded measurements.
+Older reports are normalized on dashboard reads using their saved formula values or recorded run evidence.
+The historical AI scores remain in archived reports as historical results, not the current scoring method.
 
-Measured on two synthetic runs: worker kill 49.0 (reference 48.7, all three judgements equal); Redis kill 37.8
-(reference 42.8; self-recovery judged 40/40/60 → 40 because SLIs never returned and two pods restarted).
+Availability uses recorded trace samples, which can include overlapping rolling windows. This is the
+existing formula's sampled measurement, not a deduplicated count of all client requests. The score compares
+experiments on this testbed; show order fates alongside it because aggregate scores can hide integrity loss.

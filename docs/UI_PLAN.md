@@ -14,8 +14,7 @@
 - Charts: the brief prefers a vendored uPlot/Chart.js. Vendoring means downloading a file, which needs the user's OK.
   The existing hand-written SVG chart code already works offline, so it is extended (bands, markers, limit lines,
   peak labels, recovery bracket, hatched gaps, synchronized crosshair, brush, toggleable legend). No new dependency.
-- The previous brief banned emoji; this brief asks for 💥, ↻ and tick/cross markers. The newer brief wins; every icon is
-  paired with a word.
+- The interface uses readable text labels and numbered investigation steps, without emoji.
 - Replay moves to the browser: a finished run is fetched once (`/api/run/<id>/series`, `/logs`, ...) and played with a
   scrubber at 1x/4x/10x. Live mode keeps the SSE hub. `chaosctl dashboard --replay <id>` still works: it opens with
   that run selected and never touches the cluster.

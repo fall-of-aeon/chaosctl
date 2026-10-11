@@ -27,7 +27,7 @@ distracting, rehearse more than an hour before the slot, or point at it: it show
 ## 2. Screen map (what is where)
 
 - **Header:** run picker (LIVE or any recorded run), LIVE/REPLAY badge, campaign state, kill switch state, load,
-  time since injection, tabs, **⛔ Kill switch** (red, live only), Presentation, Light/dark.
+  time since injection, tabs, **Kill switch** (red, live only), Presentation, Light/dark.
 - **Agents panel** (top of Story and Live ops, LIVE only):
   - left, blue: **Agent 1**: *Ask Agent 1 to pick a fault* → plan card → *Approve and inject* / *Pick another fault* /
     *Discard*; then run state, runner output; *Start steady traffic*.
@@ -59,7 +59,7 @@ the run ends about 2.5 min after approval; the graded diagnosis lands about 20 s
 | 10 | ~4:35 | Root cause + fixes | "Root cause: mock-api. Fixes from a vetted playbook only: retry with backoff, autoscale workers, a real health probe. Advisory, nothing is applied." |
 | 11 | ~5:20 | Run ends; Story Acts 2-4 fill in (stay on LIVE) | "Recovery time, the fate of every in-flight order, Agent 1's prediction marked confirmed or refuted, and Agent 2's diagnosis graded against what was actually injected: correct." |
 | 12 | 6:00 | Act 5 / Report tab | "The report scores resilience per component and ranks what to fix first." |
-| 13 | 6:30 | Press **⛔ Kill switch**, then *Reset kill switch* | "One press: chaos deleted, load stopped, every service checked Ready. Also from the CLI, a file, or Ctrl-C." |
+| 13 | 6:30 | Press **Kill switch**, then *Reset kill switch* | "One press: chaos deleted, load stopped, every service checked Ready. Also from the CLI, a file, or Ctrl-C." |
 
 **Party trick (if time, 1 min):** with traffic on, in a terminal:
 `kubectl -n n8n-chaos delete pod -l app=redis`. No plan exists, so Agent 2 cannot be peeking: it still investigates
@@ -126,7 +126,7 @@ highlight on. Speed up waits in the edit, never the agent steps (judges should s
 | Run skipped (`baseline_unstable` / `no_in_flight`) | Traffic was off or a pod was not Ready: start traffic, wait 30 s, ask again |
 | Agent 2 stays **re-arming** | It waits for 30 s of all-healthy after the last incident; or press *Investigate now* |
 | Agent 2 shows "Rule-based fallback" | LLM down or budget used: the fixed tool sequence still runs and still names the component |
-| Something looks stuck or unsafe | **⛔ Kill switch**. Then *Reset kill switch*. |
+| Something looks stuck or unsafe | **Kill switch**. Then *Reset kill switch*. |
 | Cluster dead | Switch to replays (section 4) and tell the story from recorded runs |
 
 ## 7. Likely judge questions

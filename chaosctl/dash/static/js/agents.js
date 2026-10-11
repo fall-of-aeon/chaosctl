@@ -2,7 +2,6 @@
 // Every write goes to /api/agent1/*, /api/kill*, /api/traffic, /api/agent2/* (chaosctl/dash/control.py, watcher.py).
 import {$, esc, DASH, nice, plain, pct, secs, tsec, clock, pill, sourceBadge} from "./util.js";
 
-const STEP_ICON = {observe: "\u{1F441}", hypothesize: "\u{1F4AD}", check: "\u{1F50E}", conclude: "\u{1F3AF}"};
 const A = {ctrl: null, a2: null, busy: false, err: null, open: new Set(), sig1: "", sig2: ""};
 
 export async function post(path, body = {}) {
@@ -55,14 +54,32 @@ function paint(force) {
   $("kill-btn").hidden = !(A.ctrl && A.ctrl.available);
   if (A.ctrl) {
     $("kill-btn").disabled = A.busy || A.ctrl.kill?.status === "running";
-    $("kill-btn").textContent = A.ctrl.kill?.status === "running" ? "⛔ Stopping…" : "⛔ Kill switch";
+    $("kill-btn").textContent = A.ctrl.kill?.status === "running" ? "Stopping…" : "Kill switch";
   }
   if (!show) return;
   // repaint only what changed, so open <details> and scroll positions survive the 1 s stream
   const s1 = JSON.stringify([A.ctrl, A.busy, A.err, A.state?.campaign, A.state?.experiment?.t_inject && Math.round(A.state.now - A.state.experiment.t_inject)]);
   if (force || s1 !== A.sig1) { A.sig1 = s1; $("agent1-live").innerHTML = agent1Html(); }
   const s2 = JSON.stringify([A.a2, A.busy, [...A.open]]);
-  if (force || s2 !== A.sig2) { A.sig2 = s2; $("agent2-live").innerHTML = agent2Html(); }
+  if (force || s2 !== A.sig2) {
+    A.sig2 = s2;
+    const panel = $("agent2-live");
+    const incident = panel.querySelector(".incident")?.dataset.incidentId;
+    const scrolls = new Map([...panel.querySelectorAll("[data-scroll-key]")].map((el) =>
+      [el.dataset.scrollKey, {top: el.scrollTop, left: el.scrollLeft}]));
+    const focusedScroll = panel.contains(document.activeElement) ? document.activeElement?.dataset.scrollKey : null;
+    const recentOpen = panel.querySelector("details.recent")?.open;
+    panel.innerHTML = agent2Html();
+    if (incident && incident === panel.querySelector(".incident")?.dataset.incidentId) {
+      panel.querySelectorAll("[data-scroll-key]").forEach((el) => {
+        const pos = scrolls.get(el.dataset.scrollKey);
+        if (pos) { el.scrollTop = pos.top; el.scrollLeft = pos.left; }
+        if (focusedScroll === el.dataset.scrollKey) el.focus({preventScroll: true});
+      });
+    }
+    const recent = panel.querySelector("details.recent");
+    if (recent && recentOpen != null) recent.open = recentOpen;
+  }
 }
 
 // ------------------------------------------------------------------ Agent 1
@@ -90,10 +107,10 @@ function agent1Html() {
       <b>${esc(c.run.result?.status || (c.run.returncode === 0 ? "finished" : "failed"))}</b>${c.run.result?.skip_reason ? ` (${esc(c.run.result.skip_reason)})` : ""}${c.run.result?.abort_reason ? ` · auto-stop: ${esc(c.run.result.abort_reason)}` : ""}
       ${c.run.result?.exp_id ? ` · <a href="?run=${esc(c.run.run_id)}/${esc(c.run.result.exp_id)}#story" data-open-run="${esc(c.run.run_id)}/${esc(c.run.result.exp_id)}">open the story</a>` : ""}</p>` : "";
     body = `<p>Agent 1 reads the live dependency map and the fault catalog, picks <b>one</b> experiment and explains why. You approve it before anything is injected.</p>
-      <div class="a-actions"><button class="primary a1" data-ag="plan" ${busy || blockers.length ? "disabled" : ""}>\u{1F4A5} Ask Agent 1 to pick a fault</button></div>
+      <div class="a-actions"><button class="primary a1" data-ag="plan" ${busy || blockers.length ? "disabled" : ""}>Ask Agent 1 to pick a fault</button></div>
       ${blockers.length ? `<ul class="blockers">${blockers.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}${last}`;
   }
-  return `<div class="chart-head"><h2><span class="eyebrow a1">Agent 1</span> Injection</h2>${c.running ? pill("fault", "●", "run in progress") : c.state === "proposed" ? pill("a1", "?", "waiting for your approval") : pill("muted", "○", "on demand")}</div>
+  return `<div class="chart-head"><h2><span class="eyebrow a1">Agent 1</span> Injection</h2>${c.running ? pill("fault", "●", "run in progress") : c.state === "proposed" ? pill("a1", "?", "waiting for your approval") : pill("muted", "", "on demand")}</div>
     ${err}${killRow}<div class="a-body">${body}</div>${msg}<div class="a-traffic">${traffic}</div>`;
 }
 
@@ -102,9 +119,9 @@ function proposalHtml(p, busy, blockers) {
   const limits = [ab.error_rate_abort === false ? "W1 error-rate stop off (outage expected for this tier)" : ab.w1_error_rate != null ? `W1 errors above ${pct(ab.w1_error_rate)}` : null,
     ab.w1_p95_ms != null ? `W1 p95 above ${secs(ab.w1_p95_ms)} s` : null, ab.queue_waiting != null ? `more than ${ab.queue_waiting} jobs waiting` : null,
     ab.max_total_s != null ? `longer than ${ab.max_total_s} s` : null].filter(Boolean);
-  const src = String(p.source || "").startsWith("llm") ? pill("ok", "✓", `Mistral (${String(p.source).split(":").pop()})`) : pill("warn", "!", "Deterministic fallback: the LLM did not choose this");
+  const src = String(p.source || "").startsWith("llm") ? pill("ok", "", `Mistral (${String(p.source).split(":").pop()})`) : pill("warn", "!", "Deterministic fallback: the LLM did not choose this");
   return `<div class="proposal">
-    <p class="big">\u{1F4A5} <b>${esc(nice(it.fault))}</b> on <b>${esc(it.target.replace("node:", ""))}</b> <span class="mono muted">${esc(it.rung)}</span> ${src}</p>
+    <p class="big"><b>${esc(nice(it.fault))}</b> on <b>${esc(it.target.replace("node:", ""))}</b> <span class="mono muted">${esc(it.rung)}</span> ${src}</p>
     <dl class="rows">
       <dt>Why</dt><dd>${esc(plain(it.reason))} ${(it.cites || []).map((x) => `<button class="chip" data-ref="${esc(x)}">${esc(x)}</button>`).join(" ")}</dd>
       <dt>Predicts</dt><dd>${esc(plain(it.hypothesis))}</dd>
@@ -112,7 +129,7 @@ function proposalHtml(p, busy, blockers) {
       <dt>Auto-stop if</dt><dd>${limits.map(esc).join(" · ") || DASH}</dd>
       <dt>Blast radius</dt><dd>${(v.blast_radius || []).map((x) => `<button class="chip" data-ref="${esc(x)}">${esc(x)}</button>`).join(" ") || "none"}
         ${Object.entries(v.workflows_affected || {}).map(([w, how]) => `<span class="muted"> ${esc(w)}: ${esc(nice(how))}</span>`).join("")}</dd>
-      <dt>Policy guard</dt><dd>${v.verdict === "approve" ? pill("ok", "✓", "approved") : pill("fault", "✕", v.verdict || DASH)} ${esc(v.rationale || "")}</dd>
+      <dt>Policy guard</dt><dd>${v.verdict === "approve" ? pill("ok", "", "approved") : pill("fault", "", v.verdict || DASH)} ${esc(v.rationale || "")}</dd>
     </dl>
     ${p.excluded?.length ? `<p class="muted">Excluded on request: ${p.excluded.map((f) => esc(nice(f))).join(", ")}</p>` : ""}
     <div class="a-actions">
@@ -130,7 +147,7 @@ function runHtml(c, st) {
   const t = x && x.active && x.t_inject ? tsec(st.now - x.t_inject) : null;
   const steps = [["PREFLIGHT_OK", "preflight"], ["WAIT_IN_FLIGHT", "waiting for orders in flight"], ["INJECTING", "injecting"], ["OBSERVING", "observing"],
                  ["RECOVERY_WAIT", "recovering"], ["DONE", "done"]];
-  return `<p class="big">\u{1F4A5} <b>${esc(nice(r.fault))}</b> on <b>${esc((r.target || "").replace("node:", ""))}</b> · run <span class="mono">${esc(r.run_id)}</span></p>
+  return `<p class="big"><b>${esc(nice(r.fault))}</b> on <b>${esc((r.target || "").replace("node:", ""))}</b> · run <span class="mono">${esc(r.run_id)}</span></p>
     <p>State <b class="mono">${esc(phase)}</b>${t ? ` · <b class="mono">${esc(t)}</b> since injection` : ""} <span class="muted">(${esc(steps.map((s) => s[1]).join(" → "))})</span></p>
     <p class="muted">Agent 2 is not told about this run. Watch its panel: it should notice on its own.</p>
     <details class="console"><summary class="muted">Runner output</summary><pre class="cmd">${esc((c.console || []).join("\n")) || "…"}</pre></details>`;
@@ -138,8 +155,8 @@ function runHtml(c, st) {
 
 // ------------------------------------------------------------------ Agent 2
 const A2_STATE = {
-  watching: ["ok", "✓", "watching"], suspicious: ["warn", "!", "symptom seen, confirming"], investigating: ["a2", "\u{1F50E}", "investigating"],
-  concluded: ["a2", "\u{1F3AF}", "diagnosed"], "re-arming": ["muted", "↻", "re-arming"], paused: ["muted", "‖", "paused"],
+  watching: ["ok", "", "watching"], suspicious: ["warn", "!", "symptom seen, confirming"], investigating: ["a2", "", "investigating"],
+  concluded: ["a2", "", "diagnosed"], "re-arming": ["muted", "", "re-arming"], paused: ["muted", "‖", "paused"],
 };
 function agent2Html() {
   const a = A.a2;
@@ -154,7 +171,7 @@ function agent2Html() {
   const bundle = bj ? `<p class="muted" style="margin-top:8px">Full evidence diagnosis of <span class="mono">${esc(bj.run_id)}/${esc(bj.exp)}</span>:
       ${bj.status === "running" ? "running…" : bj.status === "done" ? `done (${esc(String(bj.source || "").startsWith("llm") ? "LLM" : "rule-based fallback")}) · <a href="?run=${esc(bj.run_id)}/${esc(bj.exp)}#story" data-open-run="${esc(bj.run_id)}/${esc(bj.exp)}">graded in the story</a>` : `failed: ${esc(bj.error)}`}</p>` : "";
   const recent = (a.recent || []).filter((r) => !cur || r.id !== cur.id).slice(0, 4);
-  return `<div class="chart-head"><h2><span class="eyebrow a2">Agent 2</span> Diagnosis, always on</h2><span>${pill("a2", "\u{1F648}", "blind")} ${pill(k, i, w)}</span></div>
+  return `<div class="chart-head"><h2><span class="eyebrow a2">Agent 2</span> Diagnosis, always on</h2><span>${pill("a2", "", "blind")} ${pill(k, i, w)}</span></div>
     ${watch}
     <div class="a-actions"><button class="toggle" data-ag="investigate" ${A.busy || a.state === "investigating" ? "disabled" : ""}>Investigate now</button>
       <button class="toggle" data-ag="a2pause" data-paused="${a.enabled ? "1" : "0"}" ${A.busy ? "disabled" : ""}>${a.enabled ? "Pause auto-trigger" : "Resume auto-trigger"}</button></div>
@@ -168,11 +185,11 @@ function incidentHtml(r) {
   const d = r.diagnosis;
   const steps = (r.steps || []).map((s) => {
     const key = `${r.id}:${s.n}`, open = A.open.has(key);
-    return `<li><span class="ico" aria-hidden="true">${STEP_ICON[s.kind] || "•"}</span><div>
+    return `<li><span class="ico" aria-hidden="true">${s.n}</span><div>
       <span class="kind">${esc(s.kind)}</span> <span class="muted">${s.by === "rule" ? "(fixed sequence)" : ""}</span>
       <div class="txt${open ? "" : " clip"}">${esc(plain(s.thought))}</div>
       <button class="chip tool" data-ag="toggle-step" data-key="${esc(key)}" aria-expanded="${open}">tool:${s.n} ${esc(s.action)}${s.service !== "none" ? `(${esc(s.service)})` : "()"}${s.action !== "pod_status" && s.action !== "database_check" && s.action !== "downstream_check" && s.action !== "dependencies" ? ` · ${s.since_s} s` : ""} ${open ? "▾" : "▸"}</button>
-      ${open ? `<pre class="cmd result">${esc(JSON.stringify(s.result, null, 1))}</pre>` : `<div class="muted result-sum">${esc(summarize(s))}</div>`}</div></li>`;
+      ${open ? `<pre class="cmd result" data-scroll-key="${esc(key)}" tabindex="0" aria-label="Tool result">${esc(JSON.stringify(s.result, null, 1))}</pre>` : `<div class="muted result-sum">${esc(summarize(s))}</div>`}</div></li>`;
   }).join("");
   const working = r.status === "investigating";
   const pending = working ? `<li><span class="ico" aria-hidden="true"><span class="spin"></span></span><div><span class="kind">${r.phase === "concluding" ? "conclude" : "thinking"}</span>
@@ -183,10 +200,10 @@ function incidentHtml(r) {
       ${(d.fixes || []).length ? `<h3 style="margin-top:12px;color:var(--fix)">Suggested fixes (vetted playbook, not applied)</h3><ol class="fixes">${d.fixes.map((f) =>
         `<li><b>${esc(f.title || nice(f.playbook_id))}</b> <span class="chip">${esc(f.playbook_id)}</span><div class="muted">${esc(plain(f.why))}</div>${f.change ? `<pre class="cmd">${esc(f.change)}</pre>` : ""}</li>`).join("")}</ol>` : `<p class="muted">No fix needed.</p>`}
     </div>` : r.status === "failed" ? `<p class="muted">Investigation failed: ${esc(r.error)}</p>` : "";
-  return `<div class="incident">
+  return `<div class="incident" data-incident-id="${esc(r.id)}">
     <p style="margin-top:12px"><b>${r.by === "operator" ? "Asked by the operator" : "Triggered by the monitor"}</b> at <span class="mono">${esc(clock(r.started))}</span>${r.ended ? ` · ${Math.round(r.ended - r.started)} s` : ""}${r.run_id ? ` · during run <span class="mono">${esc(r.run_id)}</span>` : ""}</p>
     <pre class="cmd trig">${esc(r.trigger)}</pre>
-    <ol class="stepper">${steps}${pending}</ol>${concl}</div>`;
+    <ol class="stepper" data-scroll-key="steps" tabindex="0" aria-label="Agent 2 investigation steps">${steps}${pending}</ol>${concl}</div>`;
 }
 
 /** one line per tool result, so the transcript reads without opening the JSON */

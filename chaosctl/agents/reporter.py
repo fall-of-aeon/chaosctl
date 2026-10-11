@@ -5,9 +5,8 @@ cited id exists, fixes come from the playbook and scores are well-formed, and a 
 number in the text back to the measurements. Invalid output is retried with the errors as feedback.
 Unlike the blind diagnosis, this runs after the fact and is told what was injected.
 
-The resilience score is Agent 2's judgement: it scores each component from the evidence, with the formula
-score (score.py) as a reference it may depart from with a reason, calibrated on its earlier real judgements
-(score_memory.py). It scores SAMPLES times independently and the median per component is used.
+Resilience scores are calculated by score.py from recorded measurements. Agent 2 writes the analysis
+and recommendations using those fixed scores; report generation makes no score-judgement calls.
 """
 from __future__ import annotations
 
@@ -386,7 +385,7 @@ def summary_prompt(facts: list[dict], exp_reports: list[ExperimentReport], fired
                 "in_flight_order_fates": by_ref[r.exp_ref]["in_flight_order_fates"],
                 "recovery_time_s": by_ref[r.exp_ref]["recovery_time_s"],
                 "manual_action_needed": by_ref[r.exp_ref]["manual_action_needed"],
-                "ai_resilience_score": scores.get(r.exp_ref)} for r in exp_reports]
+                "formula_resilience_score": scores.get(r.exp_ref)} for r in exp_reports]
     detectors = [{"exp_ref": f["exp_ref"], **d} for f in facts for d in f["detectors_fired"]]
     agent2 = [{"exp_ref": f["exp_ref"], "fixes": (f["agent2_blind_diagnosis"] or {}).get("fixes")} for f in facts]
     return f"""You are Agent 2 of a chaos-engineering harness, writing the summary of the findings report across all
@@ -471,8 +470,10 @@ def write_report(exps: list[dict], kb, journal=None, call=None) -> dict:
     refs = {f["exp_ref"]: (e.get("score") or {}) for f, e in zip(facts, exps)}
     exp_reports, warnings, scores = [], {}, {}
     for f in facts:
-        if refs[f["exp_ref"]].get("scored"):
-            scores[f["exp_ref"]] = judge_scores(f, refs[f["exp_ref"]], journal, call)
+        ref = refs[f["exp_ref"]]
+        if ref.get("scored"):
+            scores[f["exp_ref"]] = {"total": ref["total"], "verdict": ref["band"],
+                                    "components": ref["components"]}
     for f in facts:
         allowed = grounded_numbers(f)
         r, bad = _ask("report_experiment", lambda fb, f=f: experiment_prompt(f, fb), ExperimentReport,

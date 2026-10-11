@@ -22,18 +22,18 @@ export async function getJSON(url) {
   return r.json();
 }
 
-// pills always pair colour with an icon and a word
-export const pill = (kind, icon, word) => `<span class="pill ${kind}"><span aria-hidden="true">${icon}</span>${esc(word)}</span>`;
+// Pills always include a readable label, with an optional plain-text marker.
+export const pill = (kind, icon, word) => `<span class="pill ${kind}">${icon ? `<span aria-hidden="true">${esc(icon)}</span>` : ""}${esc(word)}</span>`;
 export function healthPill(state) {
   return {
-    Healthy: pill("ok", "✓", "healthy"), Recovering: pill("warn", "↻", "recovering"),
-    Degraded: pill("warn", "!", "degraded"), Down: pill("fault", "✕", "down"),
+    Healthy: pill("ok", "", "healthy"), Recovering: pill("warn", "", "recovering"),
+    Degraded: pill("warn", "!", "degraded"), Down: pill("fault", "", "down"),
   }[state] || pill("muted", "?", "no data");
 }
 export function sourceBadge(src) {
   if (!src) return "";
   if (src.kind === "fallback") return pill("warn", "!", src.badge || "Rule-based fallback");
-  return pill("ok", "✓", src.text + (src.kind === "cached" ? "" : ""));
+  return pill("ok", "", src.text + (src.kind === "cached" ? "" : ""));
 }
 
 export const store = {

@@ -8,7 +8,7 @@ const WEIGHT = {availability: 30, self_recovery: 25, latency: 20, data_integrity
 export function renderReportFull(rep, runs) {
   const el = $("report-full");
   if (!rep || !rep.available) {
-    el.innerHTML = `<div class="card"><h2>Resilience report</h2><p class="what">Agent 2's score, ranking and findings across experiments.</p>
+    el.innerHTML = `<div class="card"><h2>Resilience report</h2><p class="what">Formula-calculated scores, ranking and findings across experiments.</p>
       <p>No report exists yet. It is written from the recorded runs by:</p><pre class="cmd">${esc((rep && rep.command) || "uv run chaosctl report --all")}</pre>
       <p class="muted" style="margin-top:8px">It produces ${esc((rep && rep.produces) || "findings.md and findings.json")}.</p></div>`;
     return;
@@ -16,11 +16,13 @@ export function renderReportFull(rep, runs) {
   const comps = rep.ranking?.components || [], exps = rep.ranking?.experiments || [];
   const byRef = Object.fromEntries((runs || []).map((r) => [r.ref, r]));
   const detail = Object.fromEntries((rep.experiments || []).map((e) => [e.exp_ref, e]));
-  const ai = rep.source === "llm";
-  el.innerHTML = `<div class="card"><div class="chart-head"><h2>Resilience score</h2>${ai ? pill("a2", "✓", `AI-judged by Agent 2 (${(rep.models || []).join(", ")})`) : pill("warn", "!", "Rule-based fallback: formula score, the LLM was not used")}</div>
-      <p class="what">Weighted mean of five components, 0 to 100. Hover a component for the evidence and the formula reference.</p>
-      <div class="gauge">${gauge(rep.overall.score, rep.overall.verdict)}
-        <div class="hbars">${comps.map((c) => `<div class="hbar" tabindex="0" data-comp="${esc(c.component)}"><span>${esc(nice(c.component))} <span class="muted">${WEIGHT[c.component] ?? Math.round((c.weight || 0) * 100)} %</span></span>
+  const weights = rep.score_weights || Object.fromEntries(Object.entries(WEIGHT).map(([k, v]) => [k, v / 100]));
+  const formula = rep.score_formula || "R = 0.30*A + 0.25*S + 0.20*L + 0.15*D + 0.10*M";
+  el.innerHTML = `<div class="card"><div class="chart-head"><h2>Resilience score</h2>${pill("ok", "", "Calculated from recorded measurements")}</div>
+      <p class="what">${esc(formula)}</p>
+      <p class="muted">A availability, S self-recovery, L latency, D data integrity, M detectability. Each component is 0–100; unavailable components are excluded and the remaining weights are rescaled. The overall score is the mean of scored experiments.</p>
+      <div class="gauge">${rep.overall ? gauge(rep.overall.score, rep.overall.verdict) : '<p class="muted">No measurable score available.</p>'}
+        <div class="hbars">${comps.map((c) => `<div class="hbar" tabindex="0" data-comp="${esc(c.component)}"><span>${esc(nice(c.component))} <span class="muted">${Math.round((weights[c.component] ?? c.weight ?? 0) * 100)} %</span></span>
           <span class="rail2"><i style="width:${c.mean ?? 0}%"></i></span><span class="n mono">${c.mean ?? DASH}</span></div>`).join("")}</div></div>
       <p class="muted" style="margin-top:12px">Report ${esc(rep.path)} · <a href="/api/download?path=${encodeURIComponent(rep.md_path)}">Download findings.md</a> ·
         <a href="/api/download?path=${encodeURIComponent(rep.path)}">Download findings.json</a></p></div>
@@ -28,7 +30,7 @@ export function renderReportFull(rep, runs) {
       <table><thead><tr><th>#</th><th>Experiment</th><th>Target</th><th class="n">Score</th><th>Verdict</th><th class="n">Recovery</th><th>Auto-stop</th><th>Weakest</th><th></th></tr></thead>
       <tbody>${exps.map((e) => { const r = byRef[e.exp_ref] || {}; return `<tr><td class="n">${e.rank ?? DASH}</td><td>${esc(e.alias || "")} ${esc(e.title)}</td>
         <td class="mono">${esc(e.target || "-")}</td><td class="n">${e.score ?? DASH}</td><td>${esc(e.verdict || "not scored")}</td>
-        <td class="n">${r.recovery_time_s != null ? r.recovery_time_s + " s" : DASH}</td><td>${r.auto_stopped ? pill("fault", "⛔", "yes") : r.ref ? "no" : DASH}</td>
+        <td class="n">${r.recovery_time_s != null ? r.recovery_time_s + " s" : DASH}</td><td>${r.auto_stopped ? pill("fault", "", "yes") : r.ref ? "no" : DASH}</td>
         <td>${esc(nice(e.weakest || "-"))}</td><td>${r.ref ? `<a href="#story" data-open-run="${esc(r.ref)}">Story</a>` : ""}</td></tr>`; }).join("")}</tbody></table></div>
     <div class="card"><h2>Findings</h2><p class="what">Weaknesses found, ranked by severity, each with its evidence and the playbook fix.</p>
       <div class="findings">${(rep.weaknesses || []).map((w) => { const sev = String(w.severity || "medium").toLowerCase();
@@ -39,8 +41,8 @@ export function renderReportFull(rep, runs) {
   el.querySelectorAll(".hbar[data-comp]").forEach((row) => {
     const show = (ev) => {
       const c = row.dataset.comp;
-      const lines = Object.values(detail).map((e) => { const x = (e.ai_score?.components || {})[c] || {}, f = (e.score?.components || {})[c];
-        return `<div class="r"><span>${esc(e.exp_ref)}</span><span>AI ${x.score ?? DASH} / formula ${f?.score ?? f ?? DASH}</span></div>${x.reason ? `<div class="muted">${esc(x.reason)}</div>` : ""}`; }).join("");
+      const lines = Object.values(detail).map((e) => { const f = (e.score?.components || {})[c];
+        return `<div class="r"><span>${esc(e.exp_ref)}</span><span>Formula ${f?.score ?? DASH}</span></div>${f?.why ? `<div class="muted">${esc(f.why)}</div>` : ""}`; }).join("");
       const tip = $("tip"); tip.innerHTML = `<b>${esc(nice(c))}</b>${lines || '<div class="muted">No per-experiment detail in this report.</div>'}`; tip.hidden = false;
       const r = row.getBoundingClientRect(); tip.style.left = Math.min(r.left, innerWidth - 360) + "px"; tip.style.top = (r.bottom + 6) + "px";
     };

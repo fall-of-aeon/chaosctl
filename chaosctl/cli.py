@@ -524,7 +524,7 @@ def report(run: list[str] = typer.Option(None, help="run id(s); default: newest 
     if data["source"] != "llm":
         console.print(f"[yellow]{data['source']}[/yellow]")
     if o := data["overall"]:
-        console.print(f"[bold]Resilience score{' (Agent 2)' if data['source'] == 'llm' else ''}: "
+        console.print(f"[bold]Resilience score (formula): "
                       f"{o['score']} / 100 ({o['verdict']})[/bold]  ranking, least resilient first:")
         for e in data["ranking"]["experiments"]:
             console.print(f"  {e['rank'] or '-'}. {e['exp_ref']} {e['alias'] or ''} {e['title']}: "

@@ -24,7 +24,7 @@ export function renderAgent1(a, s) {
   const el = $("agent1");
   if (!a || !a.available) { el.innerHTML = `<p class="muted">No Agent 1 decision recorded for this run.</p>`; return; }
   const c = a.chosen || {}, v = a.verdict || {}, lim = s.limits || {}, hc = s.hypothesis_check || {};
-  const verdictPill = {confirmed: pill("ok", "✓", "confirmed"), refuted: pill("fault", "✕", "refuted"),
+  const verdictPill = {confirmed: pill("ok", "", "confirmed"), refuted: pill("fault", "", "refuted"),
                        partly: pill("warn", "½", "partly")}[hc.verdict] || pill("muted", "…", "not judged yet");
   const cites = (c.cites || []).map((x) => `<button class="chip" data-ref="${esc(x)}">${esc(x)}</button>`).join(" ");
   const limits = [
@@ -38,21 +38,21 @@ export function renderAgent1(a, s) {
     const bar = r.terms ? `<span class="termbar" title="criticality ${t.criticality}, untested ${t.untested}, new info ${t.info_gain}, risk ${t.tier_risk}">
       <i style="width:${w(t.criticality)}%;background:var(--text)"></i><i style="width:${w(t.untested)}%;background:var(--muted)"></i>
       <i style="width:${w(t.info_gain)}%;background:var(--faint)"></i><i style="width:${w(t.tier_risk)}%;background:var(--fault)"></i></span>` : "";
-    return `<tr class="${r.status !== "Allowed" ? "dim" : ""}"><td>${r.chosen ? pill("a1", "\u{1F4A5}", "chosen") + " " : ""}${esc(r.alias || "")} ${esc(nice(r.fault))}</td>
+    return `<tr class="${r.status !== "Allowed" ? "dim" : ""}"><td>${r.chosen ? pill("a1", "", "chosen") + " " : ""}${esc(r.alias || "")} ${esc(nice(r.fault))}</td>
       <td class="mono">${esc((r.target || "").replace("node:", ""))}</td><td class="mono">${esc(r.rung)}${r.variant ? `: ${esc(r.variant)}` : ""}</td>
       <td class="n">${r.tier ?? DASH}</td><td class="n">${r.score == null ? DASH : r.score.toFixed(2)}</td><td>${bar}</td><td>${esc(r.status)}</td></tr>`;
   }).join("");
   el.innerHTML = `<div class="chart-head"><h2>Agent 1 decision</h2>${sourceBadge(a.source)}</div>
     <dl class="rows" style="margin-top:16px">
-      <dt>Chose</dt><dd class="big">\u{1F4A5} <b>${esc(s.title)}</b> on <b>${esc(s.target)}</b>, variant <span class="mono">${esc(c.rung)}</span>${a.variant ? ` (${esc(a.variant)})` : ""}
+      <dt>Chose</dt><dd class="big"><b>${esc(s.title)}</b> on <b>${esc(s.target)}</b>, variant <span class="mono">${esc(c.rung)}</span>${a.variant ? ` (${esc(a.variant)})` : ""}
         <div class="muted" style="font-size:.8125rem">Catalog experiment <b>${esc(a.alias || "-")}</b> · this run's experiment number <span class="mono">${esc(s.exp_id)}</span></div></dd>
       <dt>Why</dt><dd>${esc(plain(c.reason))}<div style="margin-top:6px">${cites}</div></dd>
       <dt>Predicted</dt><dd>${esc(plain(c.hypothesis))} ${pill("a1", "?", "hypothesis")} ${verdictPill}
         ${(hc.claims || []).length ? `<ul class="muted" style="margin:6px 0 0;padding-left:1.1rem;font-size:.8125rem">${hc.claims.map((x) =>
-          `<li>${x.held ? "✓" : "✕"} ${esc(x.claim)}${x.hedged ? " (hedged: 'may', not counted)" : ""}</li>`).join("")}</ul>` : ""}</dd>
+          `<li>${x.held ? "Pass:" : "Fail:"} ${esc(x.claim)}${x.hedged ? " (hedged: 'may', not counted)" : ""}</li>`).join("")}</ul>` : ""}</dd>
       <dt>Safety limits</dt><dd>Stop automatically if: <ul style="margin:4px 0 0;padding-left:1.1rem">${limits.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
         <span class="muted" style="font-size:.8125rem">Blast radius (amber on the map): ${(v.blast_radius || []).map((x) => `<button class="chip" data-ref="${esc(x)}">${esc(x)}</button>`).join(" ") || "none"}</span></dd>
-      <dt>Guard verdict</dt><dd>${v.verdict === "approve" ? pill("ok", "✓", "approved") : pill("fault", "✕", v.verdict || "-")} ${esc(a.tier_rule)}</dd>
+      <dt>Guard verdict</dt><dd>${v.verdict === "approve" ? pill("ok", "", "approved") : pill("fault", "", v.verdict || "-")} ${esc(a.tier_rule)}</dd>
     </dl>
     <details style="margin-top:16px"><summary><h3>Candidates considered (${a.candidates.length})</h3><span class="muted secondary">Score = 0.4 criticality + 0.3 untested + 0.2 new info - 0.1 risk.
       Bar: <span style="color:var(--text)">criticality</span>, <span>untested</span>, <span style="color:var(--faint)">new info</span>, <span style="color:var(--fault)">risk (subtracted)</span>.</span></summary>
@@ -63,7 +63,7 @@ export function renderAgent1(a, s) {
 export function renderAutostop(s, cursor) {
   const a = s.abort;
   if (a && (cursor == null || cursor >= a.rel_s)) {
-    $("autostop").innerHTML = `<div class="banner fault"><b>⛔ AUTO-STOP at ${tsec(a.rel_s)}:</b> ${esc(a.text)}. The safety controller stopped the load, removed the fault and checked every service came back.</div>`;
+    $("autostop").innerHTML = `<div class="banner fault"><b>AUTO-STOP at ${tsec(a.rel_s)}:</b> ${esc(a.text)}. The safety controller stopped the load, removed the fault and checked every service came back.</div>`;
   } else if (s.status && s.status !== "running" && (cursor == null || cursor >= (s.markers.find((m) => m.key === "end")?.rel_s ?? 0))) {
     $("autostop").innerHTML = `<div class="banner">No safety limit was crossed; the experiment ran to completion.</div>`;
   } else $("autostop").innerHTML = "";
@@ -196,31 +196,29 @@ export function renderTimeline(s, cursor) {
 export function renderFates(host, f, opts = {}) {
   if (!f || !f.total) { host.innerHTML = `<p class="muted">${opts.pending ? "Classified after recovery (the harness waits up to 180 s for stragglers)." : "No fate table recorded for this run."}</p>`; return; }
   const bar = f.rows.filter((r) => r.count).map((r) => `<i class="f-${r.fate}" style="width:${r.share * 100}%" title="${esc(r.label)}: ${r.count}">${r.count}</i>`).join("");
-  const icon = (r) => r.fate === "completed_once" ? "✓" : r.count ? "✕" : "✓";
   const lostIds = f.rows.filter((r) => ["lost_silently", "lost_visible", "duplicated", "phantom_success"].includes(r.fate)).flatMap((r) => r.request_ids.map((x) => `${r.label}: ${x}`));
   host.innerHTML = `<p class="big" style="font-size:1.125rem">${f.total} in flight: ${f.rows.filter((r) => r.count).map((r) => `${r.count} ${esc(r.label)}`).join(", ")}</p>
     <div class="fatebar" role="img" aria-label="Fate of ${f.total} in-flight orders">${bar}</div>
     <table class="fate-table"><thead><tr><th>Outcome</th><th class="n">Count</th><th>What it means</th></tr></thead><tbody>${f.rows.map((r) =>
-      `<tr class="${r.count ? "" : "zero"}${r.bad ? " bad" : ""}"><td>${icon(r)} ${esc(r.label)}</td><td class="n">${r.count}</td><td>${esc(r.meaning)}${!r.count && r.fate !== "completed_once" ? " (none: good news)" : ""}</td></tr>`).join("")}</tbody></table>
+      `<tr class="${r.count ? "" : "zero"}${r.bad ? " bad" : ""}"><td>${esc(r.label)}</td><td class="n">${r.count}</td><td>${esc(r.meaning)}${!r.count && r.fate !== "completed_once" ? " (none: good news)" : ""}</td></tr>`).join("")}</tbody></table>
     ${lostIds.length ? `<details style="margin-top:8px"><summary><span class="muted">Request ids of lost, duplicated and phantom orders (${lostIds.length})</span></summary><div class="mono muted" style="font-size:.8125rem">${lostIds.map(esc).join("<br>")}</div></details>` : ""}`;
 }
 
 // ------------------------------------------------------------------ Act 3
-const STEP_ICON = {observe: "\u{1F441}", hypothesize: "\u{1F4AD}", check: "\u{1F50E}", conclude: "\u{1F3AF}"};
 export function renderAgent2(d) {
   const el = $("agent2");
   if (!d || !d.available) { el.innerHTML = `<p class="muted">Agent 2 has not diagnosed this run. Command: <span class="mono">uv run chaosctl diagnose --run &lt;run-id&gt;</span></p>`; return; }
   const g = d.grade;
-  el.innerHTML = `<div class="chart-head"><h2>Agent 2: blind diagnosis</h2><span>${pill("a2", "\u{1F648}", "Blind: not told what was injected")} ${sourceBadge(d.source)}</span></div>
+  el.innerHTML = `<div class="chart-head"><h2>Agent 2: blind diagnosis</h2><span>${pill("a2", "", "Blind: not told what was injected")} ${sourceBadge(d.source)}</span></div>
     <div class="two" style="margin-top:16px">
-      <ol class="stepper">${d.thoughts.map((t, i) => `<li><span class="ico" aria-hidden="true">${STEP_ICON[t.step] || "•"}</span>
+      <ol class="stepper">${d.thoughts.map((t, i) => `<li><span class="ico" aria-hidden="true">${i + 1}</span>
         <div><span class="kind">${esc(t.step)}</span><div class="txt clip" id="th-${i}">${esc(plain(t.text))}</div>
         <button class="more" data-more="th-${i}">more</button> ${(t.cites || []).map((c) => `<button class="chip" data-evidence="${esc(c)}">${esc(c)}</button>`).join(" ")}</div></li>`).join("")}</ol>
       <div><div class="callout"><h3 style="color:var(--a2)">Root cause</h3><div class="rc">${esc(plain(d.root_cause))}</div>
           <ul style="margin:0;padding-left:1.1rem">${d.failure_chain.map((x) => `<li>${esc(plain(x))}</li>`).join("")}</ul>
           ${d.findings.length ? `<div style="margin-top:8px">Evidence: ${[...new Set(d.findings.flatMap((f) => f.evidence))].map((c) => `<button class="chip" data-evidence="${esc(c)}">${esc(c)}</button>`).join(" ")}</div>` : ""}</div>
         ${g ? `<p style="margin-top:16px;font-size:1.0625rem">${g.verdict === "NO_IMPACT" ? pill("muted", "–", "not graded") + " The fault had no measurable impact, so there was nothing to find."
-          : (g.root_cause_correct ? pill("ok", "✓", "correct") : pill("fault", "✕", "missed")) + ` Matches injected fault: <b>${g.root_cause_correct ? "yes" : "no"}</b>`}
+          : (g.root_cause_correct ? pill("ok", "", "correct") : pill("fault", "", "missed")) + ` Matches injected fault: <b>${g.root_cause_correct ? "yes" : "no"}</b>`}
           <span class="muted">(checked offline against the plan: ${esc(nice(g.fault))} on ${esc(g.actual_target)})</span></p>` : ""}</div></div>`;
   el.querySelectorAll("[data-more]").forEach((b) => b.onclick = () => { const t = $(b.dataset.more); t.classList.toggle("clip"); b.textContent = t.classList.contains("clip") ? "more" : "less"; });
 }
@@ -234,7 +232,7 @@ export function renderFix(fs, s) {
     return;
   }
   const llm = String(fs.source || "").startsWith("llm");
-  const src = llm ? pill("ok", "✓", `LLM (${fs.source.split(":").pop()})`) : pill("warn", "!", `Rule-based fallback: ${fs.fallback_reason || "LLM unavailable"}`);
+  const src = llm ? pill("ok", "", `LLM (${fs.source.split(":").pop()})`) : pill("warn", "!", `Rule-based fallback: ${fs.fallback_reason || "LLM unavailable"}`);
   const fr = Object.fromEntries((s.fates?.rows || []).map((r) => [r.fate, r.count]));
   const lost = (fr.lost_silently || 0) + (fr.lost_visible || 0) + (fr.duplicated || 0);
   const expect = lost ? `no lost or duplicated orders (this run: ${lost})` : s.recovery_time_s ? `recovery no slower than ${s.recovery_time_s} s, no lost orders` : "SLIs back within the window";
@@ -262,7 +260,7 @@ export function gauge(score, verdict, size = 260) {
 }
 export function renderReportMini(rep) {
   const el = $("report-mini");
-  if (!rep || !rep.available) {
+  if (!rep || !rep.available || !rep.overall) {
     el.innerHTML = `<p>No resilience report yet. This command writes it (ranked weaknesses, playbook fixes and a 0-100 score per experiment):</p>
       <pre class="cmd">${esc((rep && rep.command) || "uv run chaosctl report --all")}</pre>`;
     return;
@@ -271,14 +269,14 @@ export function renderReportMini(rep) {
   const weakest = comps.slice().sort((a, b) => (a.mean ?? 101) - (b.mean ?? 101))[0];
   el.innerHTML = `<div class="gauge">${gauge(rep.overall.score, rep.overall.verdict)}<div>
     <p class="big" style="font-size:1.25rem">Weakest component: <b>${esc(nice(weakest?.component || "-"))}</b>${weakest?.mean != null ? ` (${weakest.mean} / 100)` : ""}</p>
-    <p class="muted">${(rep.ranking?.experiments || []).length} experiments scored · report ${esc(rep.path)}</p>
+    <p class="muted">Formula-calculated score · ${rep.overall.experiments} experiments scored · report ${esc(rep.path)}</p>
     <p style="margin-top:8px"><a href="#report">Full report</a></p></div></div>`;
 }
 
 // ------------------------------------------------------------------ stretch goals
 export function renderStretch(host, d) {
   if (!d) { host.innerHTML = `<p class="muted">Not available.</p>`; return; }
-  const st = (s) => s === "Done" ? pill("ok", "✓", "Done") : s === "Partial" ? pill("warn", "◐", "Partial") : pill("muted", "○", "Planned");
+  const st = (s) => s === "Done" ? pill("ok", "", "Done") : s === "Partial" ? pill("warn", "", "Partial") : pill("muted", "", "Planned");
   host.innerHTML = d.goals.map((g) => {
     let body = "";
     if (g.id === "rerun_after_fix") {
@@ -290,7 +288,7 @@ export function renderStretch(host, d) {
     } else {
       body = g.runs.length ? `<p>Runs with more than one fault: ${g.runs.map((r) => `<span class="mono">${esc(r)}</span>`).join(", ")}</p>`
         : `<p class="muted">No run has had two faults at once yet. Planned: ${esc(g.scenario)}; needs ${esc(g.needs)}.</p>
-           <p class="muted" style="margin-top:8px">Ready in this UI: one fault band and \u{1F4A5} per fault, and the combined blast radius.</p>`;
+           <p class="muted" style="margin-top:8px">Ready in this UI: one fault band and label per fault, and the combined blast radius.</p>`;
     }
     return `<div class="goal">${st(g.status)}<h3>${esc(g.title)}</h3>${body}</div>`;
   }).join("");

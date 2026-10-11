@@ -366,7 +366,7 @@ class Run:
 
     def swimlane(self, trace: list[dict]) -> list[dict]:
         """Readiness over time, one row per service (one per pod for the target), from the recorded trace
-        and Kubernetes events. States: Ready, NotReady, Terminating, Pending, CrashLoopBackOff; ↻ = restart."""
+        and Kubernetes events. States: Ready, NotReady, Terminating, Pending, CrashLoopBackOff; R = restart."""
         if not trace or not self.t_inject:
             return []
         events = sorted(self.evidence.get("events") or [], key=lambda e: e["ts"])
@@ -376,7 +376,7 @@ class Run:
         for node in nodes:
             pts = [(s["t"], (s.get("pods") or {}).get(node, {}).get("ready")) for s in trace]
             node_ev = [e for e in events if (e.get("object") or "").startswith(node)]
-            marks = [{"t": self.rel(e["ts"]), "kind": "restart", "label": f"↻ {e['object']}"}
+            marks = [{"t": self.rel(e["ts"]), "kind": "restart", "label": f"Restart: {e['object']}"}
                      for e in node_ev if e["reason"] == "Started" and e["ts"] >= self.t_inject - 1]
             backoff = [self.rel(e["ts"]) for e in node_ev if e["reason"] == "BackOff"]
             if node == self.target and (self.plan_file.get("at_inject") or {}).get("target_pods"):
@@ -645,9 +645,10 @@ def report(reports: Path | None = None, run_id: str | None = None) -> dict:
     if not r:
         return {"available": False, "command": "uv run chaosctl report --all",
                 "produces": "findings.md and findings.json: ranked weaknesses, playbook fixes and a 0-100 resilience score"}
-    full = sources.read_json(reports.parent / r["path"]) or {}
-    return {"available": True, **r, "weaknesses": full.get("weaknesses") or [], "fixes": full.get("fixes") or [],
-            "experiments": full.get("experiments") or [], "md_path": r["path"].replace(".json", ".md")}
+    summary = r.get("summary") or {}
+    return {"available": True, **r, "weaknesses": r.get("weaknesses") or summary.get("weaknesses") or [],
+            "fixes": r.get("fixes") or summary.get("fixes") or [],
+            "md_path": r["path"].replace(".json", ".md")}
 
 
 def stretch_goals(reports: Path | None = None, live_dashboard: bool = True) -> dict:

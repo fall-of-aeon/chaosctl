@@ -109,6 +109,8 @@ def run_api(path: str, arg) -> tuple[dict, int]:
 
 
 def model_narr_report(rep: dict) -> str:
+    if not rep.get("overall"):
+        return "No resilience score available: recorded formula inputs are missing."
     return f"Resilience score {rep['overall']['score']} / 100: {rep['overall']['verdict']}."
 
 

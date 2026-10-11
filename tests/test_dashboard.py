@@ -240,7 +240,7 @@ def test_api_after_recovery_matches_evidence(replay_hub, monkeypatch):
 def test_page_is_offline_writes_only_through_agent_controls_and_invents_nothing():
     """No generated numbers, nothing loaded from another host. Besides the advisory chat, the only writes are the
     agent controls in agents.js (Agent 1 plan/approve, kill switch, traffic, Agent 2), all sent with the
-    X-Chaosctl header; no endpoint injects or applies anything directly. Emoji are paired with a word."""
+    X-Chaosctl header; no endpoint injects or applies anything directly. Controls have readable text labels."""
     static = ROOT / "chaosctl" / "dash" / "static"
     files = [f for f in static.rglob("*") if f.is_file()]
     text = {f.name: f.read_text() for f in files}

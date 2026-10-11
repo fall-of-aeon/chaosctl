@@ -295,7 +295,7 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   Verified on r1011-021151 (E2), r1010-155845 (auto-stop) and Compare r1010-155337 vs r1010-163348.
   Screenshots: docs/screenshots/ (1920x1080, 1366x768, 1280x720, light theme, presentation mode, mid-replay).
 - Deviations: charts are our own SVG, not a vendored uPlot/Chart.js (vendoring needs a download; offline already
-  works); emoji used where the brief asks (💥, ↻, ✓/✕), each paired with a word.
+  works). The interface now uses readable text labels and numbered investigation steps without emoji.
 - Peak p95 now comes from the client-side records (loadgen), not the safety trace, which stops at an abort:
   r1010-155845 peaks at 26.0 s (5.5x), r1010-155337 at 29.8 s (6.3x, as in README 4.2).
 - LLM settings check: the dashboard prints which MISTRAL_* settings it sees at start. This process sees

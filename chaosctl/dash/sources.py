@@ -86,7 +86,9 @@ def find_resilience(reports: Path, only_run: str | None = None) -> dict | None:
     for f in sorted(files, key=lambda f: f.stat().st_mtime, reverse=True):
         d = read_json(f)
         if d and d.get("ranking") and d.get("overall"):
-            return {"path": str(f.relative_to(reports.parent)), "generated": f.stat().st_mtime, "source": d.get("source"),
+            from chaosctl.report import formula_report
+            d = formula_report(d, reports)
+            return {**d, "path": str(f.relative_to(reports.parent)), "generated": f.stat().st_mtime, "source": d.get("source"),
                     "models": d.get("models") or [], "runs": d.get("runs") or [], "overall": d["overall"],
                     "calibrated_on": d.get("calibrated_on") or [], "ranking": d["ranking"]}
     return None

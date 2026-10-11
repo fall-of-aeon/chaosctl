@@ -4,7 +4,7 @@
 import {esc, tsec, clock, getJSON, DASH} from "./util.js";
 import {bus, flash} from "./chart.js";
 
-const SEV = {error: ["✕", "error"], warn: ["!", "warn"], info: ["i", "info"]};
+const SEV = {error: ["", "error"], warn: ["!", "warn"], info: ["i", "info"]};
 
 export class LogPanel {
   /** host: element; source: {url(params) -> string} for a finished run, or {rows() -> rows} for live */

@@ -60,7 +60,7 @@ def warn(component: str, reason: str, journal=None, *, kind: str = "error", deta
         from rich.panel import Panel
         title = {"llm_fallback": "LLM NOT USED - deterministic fallback", "error": "HARNESS ERROR",
                  "warning": "WARNING"}.get(kind, kind)
-        _console().print(Panel(f"[bold]{component}[/bold]: {reason}", title=f"⚠ {title}", border_style="red"))
+        _console().print(Panel(f"[bold]{component}[/bold]: {reason}", title=f"Warning: {title}", border_style="red"))
     except Exception:  # noqa: BLE001 - rich missing/broken: plain stderr
         import sys
         print(f"!!! {kind.upper()} {component}: {reason}", file=sys.stderr)
@@ -112,7 +112,7 @@ def print_summary() -> None:
     if not items:
         return
     c = _console()
-    c.rule(f"[bold red]⚠ {len(items)} problem(s) in this command - results below are NOT fully normal[/bold red]")
+    c.rule(f"[bold red]Warning: {len(items)} problem(s) in this command - results below are NOT fully normal[/bold red]")
     for e in items:
         c.print(f"[red]•[/red] [{e['kind']}] [bold]{e['component']}[/bold]: {e['reason']}")
     c.rule(style="red")
