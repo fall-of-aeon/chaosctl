@@ -1,630 +1,371 @@
-# chaos-n8n / `chaosctl`
+# chaosctl
 
-**AI-driven chaos engineering for a real open-source app (n8n) running on a local Kubernetes cluster.**
-Built for the Bosch Hackathon "AI-Driven Chaos Engineering for Cloud-Native Resilience".
+**AI-driven chaos engineering for cloud-native applications.**
 
-> **New to the team? Read this file top to bottom once.** It explains what we are building and why (Part 1),
-> how it works (Part 2), how to run it yourself (Part 3), what we have done so far (Part 4), and what is still
-> left (Part 5). Deeper material: `docs/JUDGES_GUIDE.md` (how to present), `docs/PROGRESS.md` (detailed log of
-> every step and result), `docs/FACTS.md` (verified technical facts), `docs/DEMO.md` (short demo runbook).
+`chaosctl` runs controlled failure experiments against a real multi-service application on Kubernetes. An AI agent
+decides *what* to break and *why*, a deterministic safety harness injects the fault and enforces hard limits, and a
+second, blind AI agent works out what went wrong from the evidence alone and recommends fixes. Every run ends with a
+measured resilience score and a findings report.
 
----
+The reference target is [n8n](https://n8n.io) (workflow automation) in queue mode: `n8n-main`, `n8n-worker`, Redis,
+PostgreSQL and a downstream HTTP API, all running in a local [Kind](https://kind.sigs.k8s.io) cluster with
+[Chaos Mesh](https://chaos-mesh.org).
 
-## Contents
-- [Part 1: What we are building, and why](#part-1-what-we-are-building-and-why)
-- [Part 2: How it works](#part-2-how-it-works)
-- [Part 3: Run it yourself (step by step)](#part-3-run-it-yourself-step-by-step)
-- [Part 4: What we have done so far](#part-4-what-we-have-done-so-far)
-- [Part 5: What is left (Day 2)](#part-5-what-is-left-day-2)
-- [Part 6: Reference](#part-6-reference)
+![Dashboard: impact of an injected fault](docs/screenshots/story-impact-1920.png)
 
 ---
 
-# Part 1: What we are building, and why
+## Table of contents
 
-## 1.1 The hackathon task in plain words
-**Chaos engineering** means breaking parts of a system *on purpose*, in a controlled way, to find weaknesses before
-real outages do. The hackathon asks for a system that:
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Deployment and containerization](#deployment-and-containerization)
+- [Configuration](#configuration)
+- [Safety model](#safety-model)
+- [Fault catalog](#fault-catalog)
+- [Project structure](#project-structure)
+- [Testing](#testing)
+- [Documentation](#documentation)
+- [Third-party components](#third-party-components)
 
-1. Runs a real, open-source, multi-service app (we chose **n8n**).
-2. **Maps** its services and how they depend on each other.
-3. Lets **AI decide** what to break, when, and how badly.
-4. **Injects failures safely**, with automatic safety limits and a kill switch.
-5. **Measures the impact**: errors, slowdowns, recovery time.
-6. Produces a **report**: weaknesses ranked by severity, with recommended fixes (and ideally a resilience score).
+---
 
-Everything runs in **our own local Kubernetes cluster** on one laptop. We never touch anything outside it.
+## Features
 
-## 1.2 What the judges expect
+- **Dependency mapping.** Discovers services from the Kubernetes API, merges declared dependencies, and computes
+  blast radius, single points of failure and criticality. Exports to JSON and Mermaid.
+- **Agent 1: experiment planner.** Scores every allowed experiment, lets an LLM pick one with a cited hypothesis,
+  validates the answer, and runs it through a policy guard. The LLM never runs commands or writes YAML.
+- **Safe fault injection.** 11 enabled faults covering six failure classes (crashes, network faults, full disk,
+  database overload, failed dependencies, traffic spikes), driven by Chaos Mesh, allow-listed Kubernetes Jobs and a
+  built-in load generator.
+- **Customer-side measurement.** A load generator sends real orders and records every request; a *fate table* classifies
+  each in-flight request as completed, lost silently, lost with an error, duplicated or phantom success.
+- **Agent 2: blind diagnosis.** Never told what was injected. Investigates with read-only tools (pods, events, logs,
+  queue, database, client metrics), explains its reasoning, and recommends fixes from a vetted playbook only. Graded
+  afterwards against the ground truth.
+- **Resilience score and findings report.** Formula-based score (availability, self-recovery, latency, data integrity,
+  detectability) plus an AI-written, fact-checked findings report in Markdown and JSON.
+- **Live dashboard.** Real-time charts, pod swimlanes, agent transcripts, a run-by-run story view, run comparison,
+  replay of recorded runs, and a cited RAG chat ("Ask Agent 2"). Works fully offline.
+- **Graceful degradation.** Every LLM call is cached, rate-limited and has a deterministic fallback. Fallbacks are
+  always surfaced loudly, never hidden.
 
-**Day 1 (shortlisting), all done:**
-- App running end to end
-- Services, dependencies and data flows mapped
-- Normal error rate, latency and health measured (the "baseline")
-- 1-2 failure injections chosen by AI (Agent 1)
-- Automatic stop / rollback
-- Visible impact
+## How it works
 
-**Day 2 (final):**
-- **At least 3 different failure types**. We have only 1 type so far (pod crash); see Part 5.
-- AI-ranked experiments with reasons
-- AI-written findings report with fixes
-- Resilience score
-- Clean run from scratch
-- Demo video (3 min or less)
-- One-page architecture
-- Findings report
-- Team form
-- Submit 30 minutes early
+Each experiment injects exactly one fault, exactly once:
 
-**5 deliverables:** source repo + README; demo video; architecture overview; findings report; team form.
+1. **Plan.** Agent 1 ranks catalog experiments (`0.4·criticality + 0.3·untested + 0.2·new-info − 0.1·risk`), the LLM
+   picks one and states a hypothesis, and the policy guard approves it and sets abort limits.
+2. **Pre-flight.** Correct cluster, all pods ready, no leftover chaos, baseline present, kill switch clear.
+3. **Warm-up and in-flight gate.** Steady load until the system is healthy, then wait until real work is in flight.
+4. **Inject.** One Chaos Mesh resource or Job, built from a catalog template and verified to have taken effect.
+5. **Observe.** A 1 Hz safety controller watches error rate, p95 latency, queue depth, collateral damage and the kill
+   switch, and stops the experiment if any limit is crossed.
+6. **Recover.** Chaos is removed; a watchdog waits for every pod to be ready and restarts workloads if needed.
+7. **Account.** Every in-flight request is classified from database row counts; an evidence bundle is written.
+8. **Diagnose and report.** Agent 2 diagnoses blind, a fix summary is generated, and the run is scored.
 
-## 1.3 Key ideas and words you will hear
+## Architecture
 
-| Term | Meaning |
+```
+┌──────────────────────────── chaosctl (Python, runs on the host) ─────────────────────────────┐
+│  dependency graph ─► Agent 1 (score ► LLM picks ► validate ► policy guard)                     │
+│     ─► in-flight gate ─► inject (Chaos Mesh / Jobs / load) ─► observe ─► recover              │
+│     ─► fate table + evidence ─► Agent 2 (blind diagnosis) ─► score + findings report          │
+│  safety controller (1 Hz) · kill switch · audit journal · dashboard (:8787) + RAG chat        │
+└─────────────┬─────────────────────────────┬─────────────────────────────┬────────────────────┘
+              │ Kubernetes API              │ Redis / Postgres probes     │ load generator
+              ▼                             ▼ (NodePorts on 127.0.0.1)    ▼ (2 orders/s)
+┌──────────────────────────── Kind cluster "chaos" (Docker) ──────────────────────────────────┐
+│  chaos-mesh : Chaos Mesh controller + daemon (acts only on annotated namespaces)            │
+│  monitoring : kube-prometheus-stack (optional)                                              │
+│  n8n-chaos  : n8n-main ─► redis ─► n8n-worker ×2 ─► mock-api                                │
+│                   └────────────► postgres ◄────────┘                                        │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+LLM: Mistral API. Receives graph summaries, plan metadata and redacted evidence only.
+```
+
+**Tech stack:** Python 3.12+, LangGraph, Typer, httpx, Kubernetes Python client, Chaos Mesh 2.8, Kind, Helm,
+n8n 2.42, Redis 7.4, PostgreSQL 17, Mistral API (`ministral-14b-latest`, fallback `ministral-8b-latest`).
+
+## Requirements
+
+| Requirement | Notes |
 |---|---|
-| **n8n** | Open-source workflow-automation tool (like Zapier). Our "victim" app. |
-| **Queue mode** | n8n split into services: `n8n-main` takes requests and puts jobs in a **Redis** queue; `n8n-worker` takes jobs and runs them; results go to **Postgres**. |
-| **Kubernetes (k8s) / Kind** | Kubernetes runs containers ("pods") and restarts them if they die. **Kind** = Kubernetes inside one Docker container on the laptop. |
-| **Chaos Mesh** | Open-source tool that injects faults into Kubernetes (kill a pod, break the network, ...). We drive it from Python. |
-| **Pod kill** | Delete a running pod instantly. Kubernetes then creates a replacement. |
-| **SPOF** | Single point of failure: one copy only, and the app needs it. |
-| **Blast radius** | Everything that breaks when one service breaks (all services that depend on it, directly or indirectly). |
-| **p95 latency** | 95 % of requests are faster than this. A good "how slow is it for customers" number. |
-| **Baseline** | The normal numbers before we break anything. |
-| **In-flight** | Requests that are being processed at the moment we inject. We only inject while work is in flight. |
-| **Fate table** | For every in-flight request: completed once / lost silently / lost with an error / duplicated / phantom success. |
-| **Phantom success** | The customer got an error, but the order was actually saved. |
-| **Silent failure** | The customer was told "OK", but the work never happened. |
-| **Agent 1** | AI (Mistral) that chooses which failure to inject and explains why. |
-| **Agent 2** | AI (Mistral) that is *not told* what was broken, works out what went wrong from evidence, and recommends fixes. |
-| **Safety controller** | Plain Python code (no AI) that watches the system every second and stops the experiment if limits are crossed. |
+| Linux or macOS | 8 GB RAM minimum; give Docker at least 6 GB |
+| [Docker](https://docs.docker.com/get-docker/) | Docker Engine or Docker Desktop |
+| [kind](https://kind.sigs.k8s.io/) | tested with v0.33 |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/) | |
+| [Helm](https://helm.sh/) | v3.12+ or v4 |
+| [uv](https://docs.astral.sh/uv/) | Python package and environment manager |
+| Mistral API key | optional; without it every AI step uses its deterministic fallback |
 
-## 1.4 Big design decisions (and why)
-1. **Target app = n8n in queue mode** on Kubernetes (main + worker + Redis + Postgres + a mock downstream API). The organizers confirmed n8n's license is fine.
-2. **Agents decide and explain; the harness executes and enforces.** The AI never runs commands. It returns JSON that we validate. Only our code creates or deletes failures, and only from a fixed catalog.
-3. **Safety is never AI-controlled.** Limits, aborts, kill switch and recovery are deterministic code. The AI can only make limits *stricter*, never looser.
-4. **The LLM can never hang the demo.** Mistral calls are cached by input, have timeouts, retries and a fallback model. If anything fails, a deterministic fallback answer is used.
-5. **We measure like a customer.** Our own load generator and probes are the ground truth, not n8n's internal health checks (which stay green during some failures; that is one of our findings).
-6. **Agent 2 is blind and advisory.** It never sees what was injected and it never changes the system. Engineers apply fixes.
-7. **Host access via NodePorts, not `kubectl port-forward`.** A port-forward is tied to one pod and dies when that pod is killed, which would break our measurements.
-8. **LLM = Mistral API** (`ministral-14b-latest`, fallback `ministral-8b-latest`), called over HTTPS with `httpx` using strict JSON-schema structured output. Orchestration with **LangGraph**. (Switched from Gemini on 2026-10-10 after its free-tier quota ran out.)
+On macOS: `brew install kind kubectl helm uv`. First-time setup takes about 25 minutes, mostly image pulls.
 
----
+## Installation
 
-# Part 2: How it works
-
-## 2.1 Architecture
-
-```
-                 ┌──────────────────────── chaosctl (Python, runs on the laptop) ─────────────────────────┐
-                 │  dependency graph ─► AGENT 1 (score ► Mistral picks ► validate ► safety guard)           │
-                 │       ─► wait for in-flight orders ─► inject (Chaos Mesh) ─► observe ─► recover          │
-                 │       ─► fate table + evidence ─► AGENT 2 (blind diagnosis, recommends fixes)            │
-                 │  safety controller (own thread, 1×/s)  ·  kill switch  ·  journal  ·  dashboard + chat   │
-                 └──────────┬───────────────────────────┬───────────────────────────┬─────────────────────┘
-                            │ Kubernetes API            │ Redis / Postgres probes   │ load generator
-                            ▼                           ▼ (NodePorts on 127.0.0.1)   ▼ (2 orders/s)
-   ┌────────────────────────────── Kind cluster "chaos" (inside Docker) ──────────────────────────────────┐
-   │  ns chaos-mesh : Chaos Mesh (injects faults, only into annotated namespaces)                          │
-   │  ns monitoring : Prometheus + Grafana (installed, currently scaled to 0 to save CPU)                  │
-   │  ns n8n-chaos  : n8n-main ─► redis ─► n8n-worker (×2) ─► mock-api                                     │
-   │                      └──────────────► postgres ◄─────────┘                                            │
-   └───────────────────────────────────────────────────────────────────────────────────────────────────────┘
-   Mistral API (internet): receives only graph summaries, plan metadata, evidence summaries. No secrets.
-```
-
-## 2.2 The app we break
-
-| Service | What it does | Host port (127.0.0.1) |
-|---|---|---|
-| `n8n-main` | Receives webhooks (orders), enqueues jobs, serves the n8n web UI | **15678** (UI + webhooks) |
-| `redis` | Job queue (Bull). **No persistence**: a restart empties it | 16379 |
-| `n8n-worker` | Takes jobs from the queue and runs the workflow | none (no Service) |
-| `postgres` | n8n's database + our `orders` table | 15432 (read-only `probe` user) |
-| `mock-api` | Fake downstream service, waits **4 s** per call so work is "in flight" when we break things | 18080 |
-
-**Data flow of one order:** `client ─► n8n-main ─► Redis queue ─► n8n-worker ─► mock-api (4 s) ─► Postgres (save order)`
-
-## 2.3 The 2 workflows (in `workflows/`)
-Both have the same 3 steps: **receive order (webhook) → call mock-api → save order in Postgres**.
-
-| | W1 sync order | W2 async order |
-|---|---|---|
-| URL | `POST http://127.0.0.1:15678/webhook/chaos-w1` | `POST http://127.0.0.1:15678/webhook/chaos-w2` |
-| Customer gets an answer... | **after** the order is saved | **immediately** ("200 OK"), before any work |
-| Shows | **visible** failures (errors, slowness) | **silent** failures (told OK, then lost) |
-
-Every request carries a unique `request_id`. The `orders` table deliberately has **no unique constraint**, so
-afterwards we can count rows per id: 0 rows = lost, 1 = completed, 2+ = duplicated.
-(A third "heartbeat" workflow and a "validate" step were removed as unused.)
-
-## 2.4 Lifecycle of one experiment (what `chaosctl run` / `chaosctl demo` does)
-Each experiment injects **exactly one fault, exactly once**. Nothing runs unless you start a command.
-
-1. **Load the dependency graph** from Kubernetes plus `chaosctl/overlay.yaml`.
-2. **Agent 1 plans.**
-   - (a) Python scores every allowed experiment in `catalog.yaml`:
-     `score = 0.4×criticality + 0.3×untested + 0.2×new-info − 0.1×risk-tier`.
-   - (b) Mistral picks, with a reason that cites graph IDs and a hypothesis.
-   - (c) A validator rejects anything not in the catalog or citing unknown IDs. On rejection, a deterministic plan is used.
-   - (d) The **policy guard** computes the blast radius, sets abort limits (stricter only), and enforces the risk-tier
-     rule: **a tier-3 experiment (Redis/Postgres/n8n-main kill) only after a tier-1 experiment has passed.**
-   - At most 6 experiments per plan (`policy.yaml` `max_experiments_per_plan`); the deterministic plan lets nodes take
-     turns and uses each fault's gentlest rung. `--exp <fault id>` restricts the candidates instead.
-3. **Pre-flight checks.** The experiment is skipped if any one fails:
-   - The right cluster (`kind-chaos`)
-   - All pods Ready
-   - Chaos Mesh daemon Ready
-   - No leftover chaos
-   - Fault and target are in the catalog
-   - Redis and Postgres probes reachable
-   - Baseline exists
-   - Safety controller healthy
-   - Guard verdict = approve
-   - No `./KILL` file
-   - Not LOCKED
-4. **Warm-up:** 60 s of steady load (2 orders/s). Must be healthy, or the experiment is **skipped**.
-5. **In-flight gate:** wait until ≥ 3 W1 requests are in flight and ≥ 1 job is active, then record exactly which requests
-   are in flight. Timeout after 90 s means the experiment is skipped (we never inject blind).
-6. **Inject:** create one Chaos Mesh resource (`PodChaos`, `NetworkChaos` or `HTTPChaos`, always `mode: one`) from the
-   catalog template. See **2.6** for the full catalog. Reversible faults end on their own after their duration; the
-   run does not count SLIs as recovered before that.
-7. **Observe** (up to 175 s): every second, record latency, errors, queue and pod health. The safety controller checks its limits
-   every second in its own thread:
-   - error rate
-   - p95 latency
-   - queue length
-   - total time cap
-   - any service outside the blast radius going down
-   - kill switch
-
-   Error/latency limits for tier 1 only arm after 90 s (the outage is expected first). Tier 3 has no error-rate limit (an outage is by design).
-8. **Recover:** delete the chaos resource. The **watchdog** waits up to 120 s for every pod to be Ready; if not, it restarts
-   the workload itself and records `manual_action_needed`. If even that fails, the system goes **LOCKED** (no more
-   experiments until `chaosctl recover --ack`).
-9. **Fate table:** wait up to 180 s for in-flight requests, then classify each one using Postgres row counts.
-10. **Evidence bundle** written to `reports/<run-id>/evidence/`. The chaos details are kept in a separate file Agent 2 never sees.
-11. **History** updated (`state/history.json`). This decides "untested" scores and the tier rule next time.
-12. **Agent 2** (`chaosctl diagnose`) reads the evidence:
-    - deterministic detectors
-    - Mistral's step-by-step reasoning (observe → hypothesize → check → conclude)
-    - root cause
-    - fixes from `playbook.yaml` only
-
-    Afterwards it is graded against what was really injected.
-
-## 2.5 Safety, in one list
-- Chaos Mesh only acts on namespace **`n8n-chaos`** (annotated); we tested that other namespaces are ignored.
-- Our Chaos Mesh client builds resources **only from catalog templates** and re-checks the result:
-  - namespace `n8n-chaos`
-  - `mode: one`
-  - capped duration for reversible faults; every fault except `pod-kill` must be reversible
-  - a NetworkChaos peer (`target`) also pinned to `n8n-chaos`
-  - ladder values checked before they are spliced into YAML; CPU/memory/clock-offset caps
-  - Jobs: allow-listed image only, run once, no host namespaces, no privileges, no service-account token, only
-    allow-listed PVCs, deadline ≤ max duration, pgbench clients capped; load spike capped at 10 req/s
-  - labels `chaosctl=managed`
-- **Nothing degrades silently** (`chaosctl/alerts.py`). Whenever the LLM is not used (no key, quota, timeout, invalid
-  answer) or the harness cannot do something (evidence collection, safety check, chaos clean-up), it prints a red
-  panel at that moment, writes a `degraded` event to the journal and `state/degraded.jsonl`, shows a red banner on the
-  dashboard, and repeats everything in a summary when the command exits. Plans and diagnoses are labelled
-  `llm:api:<model>`, `llm:cache:<model>` (replayed answer to an identical prompt) or `fallback:<reason>`; a fallback
-  diagnosis is never graded as an Agent 2 result. **`chaosctl --require-llm ...`** (or `CHAOSCTL_REQUIRE_LLM=1`)
-  makes any LLM fallback stop the command with exit code 2 instead.
-- The harness refuses to run if `kubectl`'s current context is not **`kind-chaos`**.
-- **Kill switch, 3 ways:**
-  - `chaosctl kill`
-  - creating a file named `KILL` in the repo root
-  - Ctrl-C / SIGTERM
-
-  Each one stops the load, deletes all managed chaos, and runs the watchdog.
-- Active run info is saved in `state/active_run.json`, so `chaosctl recover` works even if the runner crashed.
-- Every decision and action is written to an append-only journal: `reports/<run-id>/journal.jsonl`.
-
-
-## 2.6 Failure catalog (`chaosctl/catalog.yaml`)
-Chaos Mesh provides most fault *types*; the catalog decides which n8n component each one may hit, how hard (a ladder
-of rungs, gentlest first), its risk tier, and its maximum duration. Agent 1 only picks `(fault, target, rung)` from
-this list; it never writes YAML. Three drivers: **Chaos Mesh** CRs, Kubernetes **Jobs** we run from an allow-listed
-image (load and disk ballast), and our own **load generator** (traffic spike).
-
-| Failure type (organizers' list) | Fault id | How | Target | Rungs | Tier |
-|---|---|---|---|---|---|
-| Service / container crash | `worker_pod_kill` | PodChaos pod-kill | n8n-worker | grace 0 s | 1 |
-| | `worker_graceful_kill` | PodChaos pod-kill | n8n-worker | grace 30 s | 1 |
-| | `worker_container_kill` | PodChaos container-kill | n8n-worker | restart in place | 1 |
-| | `worker_pod_failure` | PodChaos pod-failure | n8n-worker | 30 s, 60 s | 1 |
-| | `main_pod_kill`, `redis_pod_kill`, `postgres_pod_kill` | PodChaos pod-kill | SPOFs | grace 0 s | 3 |
-| Slow or lossy network | `redis_latency`, `postgres_latency` | NetworkChaos delay | redis / postgres | 100 ms - 2 s for 45 s | 2 |
-| | `packet_loss` | NetworkChaos loss | redis, postgres or mock-api | 10 %, 30 % for 45 s | 2 |
-| | `mockapi_latency` | HTTPChaos delay | mock-api `/work` | +2 s, +10 s, +30 s (past the 30 s timeout) | 2 |
-| Full disk | `postgres_disk_full` | Job: ballast file fills the **real** postgres disk (512 MiB loop disk, see below) | postgres | 4 MiB left, completely full; 40 s | 3 |
-| Overloaded database | `postgres_overload` | Job: `pgbench` in the cluster | postgres | 4 or 8 CPU-heavy clients; 85 of 100 connections held; 45 s | 2 |
-| Failed dependency | `mockapi_http_500` | HTTPChaos replace code | mock-api `/work` | 500 for 30 s, 503 for 60 s | 1 |
-| | `mockapi_http_abort` | HTTPChaos abort | mock-api `/work` | 30 s | 1 |
-| | `mockapi_container_kill` | PodChaos container-kill | mock-api | restart in place | 1 |
-| | `worker_redis_partition` | NetworkChaos partition | one worker ↔ redis | 20 s, 60 s (reaches the 60 s Bull lock) | 2 |
-| Sudden traffic spike | `traffic_spike` | our load generator | n8n-main (webhooks) | 2 → 6 or 10 req/s for 60 s | 2 |
-| *(off)* | `worker_cpu_stress`, `worker_memory_stress` | StressChaos | n8n-worker | disabled: Kind cgroup v2 issue (3.5) | - |
-| *(off)* | `worker_clock_skew` | TimeChaos | n8n-worker | disabled: flaky ptrace into Node.js (3.5) | - |
-| *(test)* | `pod_failure` | PodChaos pod-failure | worker | kill-switch test only | - |
-
-**Trimmed for the demo (11 Oct):** `worker_graceful_kill`, `worker_container_kill`, `mockapi_container_kill`, `mockapi_http_abort`, `redis_latency`, `postgres_latency` and `packet_loss` are now `enabled: false` (weaker duplicates or no measurable impact in the E2E runs); 11 faults stay enabled and still cover all 6 failure types. Set `enabled: true` to bring one back.
-
-**Full disk without risking the laptop.** The postgres volume is a hostPath on the Kind node, i.e. on the laptop's disk
-(~1 TB free), so filling it directly is not an option, and Chaos Mesh's IOChaos (fake `ENOSPC`) does not work on this
-Kind setup. `scripts/pg_small_disk.sh` (run by `up.sh`) puts postgres's data on a 512 MiB loop-mounted ext4 file inside
-the Kind node. The fault's Job writes a ballast file until that disk is full, holds it, and deletes it when it ends;
-`delete_all` also runs a cleanup Job. Three guards: preflight refuses unless postgres's filesystem is ≤ 1 GiB, the Job
-itself refuses on a disk > 1 GiB, and the Job may only mount that one PVC. After a Kind node restart, run the script
-again (it remounts the existing disk image).
-
-**Every injection is verified.** After creating a fault the runner checks it really took effect (Chaos Mesh
-`AllInjected` / the Job's pod running). If not, the experiment is marked `inject_failed` (never "passed") and an alert
-is raised.
-
-Left out on purpose: DNSChaos (Chaos Mesh installed without its DNS server), JVMChaos (n8n is Node.js), IOChaos (its
-injector dies on this Kind setup), Kernel/Block chaos (on a single-node Kind cluster they can take down the node),
-cloud and physical-machine chaos.
-
-## 2.7 The dashboard (`chaosctl dashboard` → http://127.0.0.1:8787)
-
-**The agents, live** (panel at the top of Story and Live ops, live mode only):
-- **Agent 1, on a button.** *Ask Agent 1 to pick a fault* runs the same injection agent as `chaosctl plan` (score →
-  Mistral → validate, with one self-correction if the plan cites ids that are not on the map → policy guard). The card
-  shows the pick, why (cited graph ids), the prediction, the auto-stop limits, the blast radius and the guard verdict.
-  Nothing is injected until you press **Approve and inject**: the exact approved plan then runs in its own
-  `chaosctl execute` process through the campaign graph, runtime guard, preflight and safety controller (the dashboard
-  itself injects nothing). *Pick another fault* re-plans without that fault.
-- **Agent 2, always on.** A watcher in the dashboard checks every service each second; when one stays Down or Degraded
-  for 3 s it starts a blind investigation on its own: Mistral picks read-only tools one step at a time (pod status,
-  events, service logs, queue, client SLIs, database, downstream probe, dependency map, the detectors), each step
-  streams to the page, then it writes a root cause, failure chain and playbook-only fixes (findings must cite its own
-  tool calls). It never reads the plan, the journal or Chaos Mesh objects. Records: `state/incidents/` and
-  `reports/<run-id>/investigations/`. When a run's evidence bundle appears, it also runs the graded evidence
-  diagnosis and the fix summary, so Acts 3-4 fill in without a command. *Investigate now* asks it by hand.
-- **Kill switch** (header): same as `chaosctl kill` (./KILL, delete all chaos, wait for every service Ready);
-  *Reset kill switch* = `chaosctl recover`. **Steady traffic** gives Agent 2 client signals between runs.
-- Every write is a POST with an `X-Chaosctl: 1` header (another web page cannot send it); the server listens on
-  127.0.0.1 only. Fixes are still advisory: nothing applies them.
-Works offline (no CDN; charts are our own SVG). Pick a run in the header: **LIVE** follows the cluster, any finished
-run is **REPLAYED** from `reports/<run-id>/` + `state/loadgen.sqlite` with a scrubber (1x / 4x / 10x), so the demo
-video needs no cluster. `chaosctl dashboard --replay <run-id>` opens straight on that run; `?run=<run-id>/<exp>` in
-the URL does the same. **Presentation** (+25 % type, less detail) and **light/dark** are remembered per browser.
-
-**Tabs.**
-- **Story** (default): six acts, each opening with one plain sentence built from the run's numbers.
-  0 Start (map, baseline numbers) → 1 Agent 1 injects (choice, why with cited graph ids, prediction marked
-  *hypothesis* and later *confirmed / refuted / partly*, safety limits, guard verdict, candidates with the score split
-  into its four terms) → 2 Impact (auto-stop banner, three charts on a shared T+ axis with phase bands, markers,
-  baseline and abort lines, peak and recovery bracket; pod swimlane; recovery timeline; fate bar and table)
-  → 3 Agent 2 diagnoses (blind badge, model or fallback badge, reasoning stepper with evidence chips that open the log,
-  root cause, offline grade) → 4 Fix summary (what broke, why, playbook fixes with effort/impact/change, verify,
-  rollback) → 5 Resilience report (score, or the `chaosctl report --all` command). Then the stretch goals.
-- **Live ops**: live charts and pod swimlane, service tiles, merged error log.
-- **Agent 2 live investigation**: a parallel triage (pods, client SLIs, queue, events, Postgres silent-loss check) with
-  no LLM call, then at most 3 LLM-chosen follow-up tools and a written diagnosis on the fast `ministral-8b-latest`
-  (~25 s on a live incident; a healthy system is reported at once without an LLM). The graded evidence diagnosis after
-  a run keeps `MISTRAL_MODEL`. Each chart shows a one-line takeaway above it.
-- **Ask Agent 2** (header button, every tab): a side-panel conversation about the run in the run picker. Follow-up
-  questions keep context. Retrieval (RAG) puts that run's own records first (result with fate meanings, findings-report
-  analysis, diagnosis, Kubernetes events, logs), then BM25 matches from other runs, the playbook and docs; docs are
-  labelled historical so their older numbers are not presented as the current run's. Mistral must answer from those
-  sources and cite them (each source is shown and marked "this run"); if the LLM is unavailable it shows the matching
-  records and says so. Advisory only.
-- **Compare**: two runs aligned on injection (A dashed, B solid), delta table, one-line verdict, fate bars.
-  Defaults to the before/after pair the stretch-goal card finds (E1 with 1 worker vs 2 workers).
-- **Report**: score gauge, components with weights, ranked experiments, findings, downloads of findings.md/.json.
-
-**Fallbacks are never hidden**: every AI output shows its model or a "Rule-based fallback: <reason>" badge, and the
-red banner lists every LLM fallback and harness error from the last hour (`state/degraded.jsonl`). At start the server
-prints which LLM settings it sees (names and model ids, never the key).
-
-**Fix summary** (new LLM step): written at the end of `chaosctl diagnose` (or `chaosctl fix-summary --run <id>`) to
-`reports/<run-id>/evidence/fix_summary.json`. Blind like Agent 2 (input: the diagnosis and the chosen playbook entries);
-the LLM writes the sentences, every command comes from `playbook.yaml`; falls back to a playbook-only card.
-
-**API** (all GET): live `/api/state`, `/api/components`, `/api/metrics`, `/api/events`, `/api/stream` (SSE, polling
-fallback), `/api/graph`; recorded `/api/runs`, `/api/run/<id>/{summary,series,logs,fates,agent1,diagnosis,fix-summary,
-report}?exp=`, `/api/stretch-goals`, `/api/compare?a=&b=`, `/api/report`, `/api/download?path=` (findings files only).
-Series and logs use seconds relative to injection. `POST /api/chat {question, history?, run?}` is the advisory RAG chat behind the panel.
-
-**Where the numbers come from:** client results and latency from `state/loadgen.sqlite`; queue depth, pod readiness,
-Kubernetes events and log lines from the evidence bundle (live: Redis/Postgres via NodePort and the Kubernetes API);
-phases, decisions and markers from `journal.jsonl`; fates and timeline from `evidence/<exp>.json`; diagnosis, fix
-summary and report from their JSON files. Gaps are drawn hatched with the reason ("queue not recorded ...").
-
----
-
-# Part 3: Run it yourself (step by step)
-
-## 3.1 Prerequisites
-- **macOS or Linux, 8 GB RAM minimum.**
-  - Give Docker Desktop **at least 6 GB** of memory (Settings → Resources → Memory).
-  - With less, the cluster will be killed. This happened to us once at 3.8 GB.
-- Docker, `kind` (we used v0.33.0), `kubectl`, `helm` (v4.3.0; v3.12+ also works), and [`uv`](https://docs.astral.sh/uv/).
-  On a Mac: `brew install kind helm uv`.
-- A **Mistral API key** from https://console.mistral.ai (API Keys). Optional: without it, every AI step uses its deterministic fallback.
-- Internet access for image downloads. The first setup takes **~25 minutes**, mostly image pulls.
-
-## 3.2 First-time setup
+### 1. Clone and install the Python package
 
 ```bash
-git clone https://github.com/fall-of-aeon/chaosctl.git && cd chaosctl
-cp .env.example .env                 # put your MISTRAL_API_KEY in .env (never commit .env)
-uv sync                              # Python environment + dependencies
-uv run pytest                        # 87 unit tests, no cluster needed: all should pass
+git clone https://github.com/fall-of-aeon/chaosctl.git
+cd chaosctl
+uv sync
+cp .env.example .env    # then set MISTRAL_API_KEY (optional)
 ```
 
-Optionally, check that Mistral works:
-```bash
-PYTHONPATH=. uv run python scripts/llm_smoke.py
-```
-
-## 3.3 Create the cluster and the app
-
-| Step | Command | What it does | Time |
-|---|---|---|---|
-| 1 | `uv run chaosctl cluster-up` | Kind cluster `chaos` with NodePorts on 127.0.0.1; installs kube-prometheus-stack 92.3.0 and Chaos Mesh 2.8.4; creates + annotates namespace `n8n-chaos` | 10-15 min |
-| 2 | `uv run chaosctl up` | Generates local passwords into `state/secrets.env`; loads images into Kind; deploys Postgres, Redis, mock-api and n8n 2.42.4 (Helm chart 1.15.0, queue mode) | 5-10 min |
-| 3 | `uv run chaosctl bootstrap` | Imports the Postgres credential + 2 workflows into n8n, publishes them, restarts n8n, smoke-tests W1 and W2 | 2-3 min |
-| 4 | `kubectl -n monitoring scale deploy/monitoring-grafana --replicas=0` and `kubectl -n monitoring patch prometheus monitoring-kube-prometheus-prometheus --type merge -p '{"spec":{"replicas":0}}'` | **Frees CPU.** Grafana + Prometheus used ~1 core and made results invalid on our laptop; the demo uses our own dashboard | seconds |
-| 5 | `kubectl -n n8n-chaos scale deploy/n8n-worker --replicas=2` | Applies the fix Agent 2 recommended (see Part 4). The baseline profile deploys 1 worker | 1 min |
-| 6 | Open http://127.0.0.1:15678 | n8n web UI. **First visit asks you to create an owner account** (local only; any email/password) | |
-
-Then capture a baseline:
-```bash
-uv run chaosctl baseline --duration 120     # 2 min of steady load → state/baseline.json
-```
-Expect W1 100 % success, p95 around 5-6 s, queue at about 0.
-
-## 3.4 Running experiments
+Verify the install (no cluster required):
 
 ```bash
-uv run chaosctl dashboard               # terminal 1, keep running; open http://127.0.0.1:8787
-uv run chaosctl graph                   # dependency map table; also writes graph.json and graph.mmd (Mermaid)
-uv run chaosctl plan --dry-run          # Agent 1's plan with reasons and guard verdicts. Never injects.
-uv run chaosctl demo                    # judge demo: Agent 1 picks ONE experiment, runs it once, Agent 2 diagnoses
-uv run chaosctl demo --queue-abort 20   # same, with a strict queue limit to show the automatic stop
-uv run chaosctl run --exp E1            # E1 = worker pod kill (add --max-experiments 1: Agent 1 may plan repeats)
-uv run chaosctl run --exp E2            # E2 = Redis pod kill (only allowed after a passed E1)
-uv run chaosctl run --exp redis_latency # any catalog fault id (2.6); repeatable
-uv run python scripts/chaos_smoke.py    # live check of every fault driver, no load (~4 min)
-uv run chaosctl --require-llm demo      # fail instead of falling back if Mistral cannot be used
-uv run chaosctl diagnose                # Agent 2 on the newest run (or: --run r1010-163829)
-uv run chaosctl report                  # AI-written findings report + score (newest run; --run ID, --all)
-uv run chaosctl eval --exclude-tests    # recorded agent scoreboard -> reports/eval.md and eval.json
-uv run chaosctl kb                      # fault knowledge base: E1/E2/... and consistency check
-uv run chaosctl kill                    # KILL SWITCH (or: touch KILL, or Ctrl-C in the run)
-uv run chaosctl recover --ack           # clean up after a crash; clears LOCKED
-uv run chaosctl killswitch-test         # kill switch acceptance test, 3× each way (about 10 min)
+uv run pytest
 ```
 
-`chaosctl eval` prints a Markdown scoreboard and writes `reports/eval.md` and `reports/eval.json` using
-recorded data only. Filter with repeated or comma-separated `--runs ID`, `--since` (ISO date/time or epoch
-seconds), and `--exclude-tests` (kill-switch runs and limits tighter than policy defaults). Use `--out-dir`
-to keep comparison outputs. `--since` filters journal timestamps and incident starts; diagnoses and fix
-summaries, which lack timestamps, count only for runs starting after the cutoff. Chat fallback counts are
-shown with an unavailable rate because successful chat answers are not recorded.
+### 2. Create the cluster
 
-**One experiment takes about 2-4 minutes**: 30 s warm-up (`warmup_s` in `policy.yaml`), observation until SLIs have held at baseline for 15 s (`recovery_hold_s`, at most ~3 min), up to 3 min to resolve in-flight requests (usually seconds).
+Creates the Kind cluster `chaos`, installs Chaos Mesh and kube-prometheus-stack, and creates the annotated
+`n8n-chaos` namespace (10–15 min):
 
-## 3.5 Gotchas we hit (read these)
-- **`kind load docker-image` fails** with Docker Desktop's containerd image store ("content digest not found").
-  `scripts/up.sh` works around it by streaming images in with `docker save --platform ... | ctr import`.
-- **Image pulls from ghcr.io inside Kind are slow** (~10 min for Chaos Mesh the first time).
-- **n8n 2.x** activates workflows with `n8n publish:workflow --id=...`, then needs a restart of main + worker.
-  `bootstrap.sh` handles both.
-- **The first request after an n8n restart can time out** (n8n-main still connecting to Postgres). Retry after a minute.
-- **CPU starvation makes results invalid.** If the laptop is busy (load average far above the core count), the
-  pre-flight may skip the experiment (`baseline_unstable`), or results are garbage. Keep Grafana/Prometheus at 0 and close heavy apps.
-- **Repeated faults on the same pod** push it into CrashLoopBackOff (Kubernetes back-off), and recovery gets slower.
-  Fix with `kubectl -n n8n-chaos rollout restart deploy/n8n-worker`.
-- `chaosctl up` resets the worker count to 1 (Helm values). Re-apply step 5 afterwards.
-- **StressChaos and TimeChaos are unreliable on Kind (cgroup v2)**: after one StressChaos the target container is left
-  in a deleted cgroup and the next Stress/TimeChaos on that pod fails; TimeChaos ptrace into Node.js is flaky and once
-  crashed a worker (SIGSEGV). These faults are in the catalog but disabled (`known_issue`). Restart the worker
-  Deployment after trying them.
-- `kubectl` must point at `kind-chaos` (`kubectl config use-context kind-chaos`), or the harness refuses to run.
-- **Mistral rate limits** (HTTP 429) on the free "Experiment" plan. Calls are retried with back-off, then the fallback
-  model is tried; if both fail, Agent 1, Agent 2 and the chat silently use their deterministic fallbacks (the dashboard
-  labels them "deterministic fallback"). The "answered by" / source label tells you which one you got. Before a demo,
-  check limits and usage at console.mistral.ai. Identical questions are answered from the cache (`state/llm_cache.sqlite`)
-  without using quota.
+> **Linux hosts:** load the kernel loop module *before* creating the cluster. The full-disk fault puts Postgres on a
+> small loop-mounted volume inside the Kind node, which needs `/dev/loopN` devices (Docker Desktop provides them
+> already). If the cluster already exists, delete and recreate it after loading the module.
+>
+> ```bash
+> sudo modprobe loop
+> ```
 
-## 3.6 Repository layout
-
-```
-chaosctl/                  the Python package (the "harness")
-  cli.py                   all commands (typer)
-  graph.py                 dependency graph: k8s discovery + overlay + blast radius, SPOF, criticality, Mermaid
-  overlay.yaml             declared dependencies and workflow paths (what manifests can't show)
-  catalog.yaml             the ONLY faults that may be injected (templates, tiers, enabled flags)
-  knowledge/<fault>.yaml   what each fault means: hypothesis, expected symptoms, signature, fixes (docs/KNOWLEDGE_BASE.md)
-  fault_kb.py              loads + checks the knowledge base; the only way agents/report/score see faults
-  policy.yaml              safety limits, tier rules, warm-up, in-flight gate
-  playbook.yaml            the ONLY fixes Agent 2 may recommend (with source, verify, rollback)
-  agents/injection.py      Agent 1: scorer, Mistral select, validator, policy guard (LangGraph)
-  agents/campaign.py       campaign graph: plan → execute → update history → loop (LangGraph)
-  agents/diagnosis.py      Agent 2: blind filter, detectors, Mistral reasoning, playbook validator, grading
-  chaos/chaosmesh.py       creates/deletes/pauses Chaos Mesh resources from catalog templates only
-  runner.py                one experiment end to end (pre-flight, warm-up, gate, inject, observe, recover, fates)
-  safety.py                state machine, 1 Hz abort monitor, kill switch, recovery watchdog, LOCKED
-  loadgen.py               load generator (2 orders/s) + SQLite request log + in-flight queries
-  probes.py                Redis/Postgres/Kubernetes probes + fate classification
-  llm.py                   Mistral wrapper: cache, retries, fallback model, budget, secret redaction
-  rag.py                   "Ask Agent 2" chat: corpus, BM25 retrieval, cited answers
-  report.py                `chaosctl report`: findings.md/.json (AI-written; deterministic draft if Mistral is down)
-  agents/reporter.py       Agent 2 report mode: writes + scores the report; validators and number fact-check
-  score.py, scoring.yaml   measurement-based resilience formula + weights
-  score_memory.py          historical Agent 2 score judgements (legacy scoring)
-  dash/                    live dashboard: sources (live/replay), hub (collector), model (pure rules), server, static page
-  alerts.py                loud warnings: every fallback/harness error printed, journaled, in state/degraded.jsonl
-  journal.py, kube.py      audit journal; Kubernetes client pinned to kind-chaos
-scripts/                   cluster-up/down, up/down, bootstrap, kind-config, llm_smoke
-k8s/                       namespace, postgres, redis (+ hardened: AOF + PVC), mock-api, n8n NodePort
-helm-values/               n8n baseline, kube-prometheus-stack (trimmed), chaos-mesh (containerd)
-mock_api/                  FastAPI mock downstream (delay/error rate settable via POST /admin)
-workflows/                 W1 sync, W2 async (n8n JSON)
-tests/                     57 pytest tests (+ recorded manifests in tests/fixtures)
-docs/                      PROGRESS (log), FACTS (verified facts), JUDGES_GUIDE, DEMO
-state/   (gitignored)      secrets.env, baseline.json, history.json, loadgen.sqlite, LLM cache, active run
-reports/ (gitignored)      one folder per run: journal, results, evidence, diagnoses
+```bash
+uv run chaosctl cluster-up
 ```
 
----
+### 3. Deploy the target application
 
-# Part 4: What we have done so far
-(Full detail with every number: `docs/PROGRESS.md`.)
+Generates local secrets into `state/secrets.env`, builds the mock API image, loads all images into Kind, and deploys
+PostgreSQL, Redis, the mock API and n8n in queue mode (5–10 min):
 
-## 4.1 Build log, in order
+```bash
+uv run chaosctl up
+```
 
-| # | Step | Result |
+Use `uv run chaosctl up --profile hardened` to deploy Redis with persistence (AOF + PVC) for before/after comparisons.
+
+### 4. Import and publish the workflows
+
+```bash
+uv run chaosctl bootstrap
+```
+
+### 5. Tune the cluster for experiments
+
+Run two workers, and scale monitoring down to free CPU (the dashboard does not need it):
+
+```bash
+kubectl -n n8n-chaos scale deploy/n8n-worker --replicas=2
+```
+
+```bash
+kubectl -n monitoring scale deploy/monitoring-grafana --replicas=0
+```
+
+```bash
+kubectl -n monitoring patch prometheus monitoring-kube-prometheus-prometheus --type merge -p '{"spec":{"replicas":0}}'
+```
+
+### 6. Capture a baseline
+
+```bash
+uv run chaosctl baseline --duration 120
+```
+
+Expected: 100 % success, p95 around 4–6 s, queue near 0. The n8n UI is at http://127.0.0.1:15678.
+
+## Usage
+
+Start the dashboard in its own terminal and open http://127.0.0.1:8787:
+
+```bash
+uv run chaosctl dashboard
+```
+
+Run a complete, AI-driven experiment (Agent 1 plans, the harness injects, Agent 2 diagnoses):
+
+```bash
+uv run chaosctl demo
+```
+
+### Command reference
+
+| Command | Description |
+|---|---|
+| `chaosctl graph` | Print the dependency map; writes `graph.json` and `graph.mmd` |
+| `chaosctl plan --dry-run` | Show Agent 1's plan, reasons and guard verdicts without injecting |
+| `chaosctl demo` | Plan, run and diagnose one experiment end to end |
+| `chaosctl run --exp E1` | Run a specific fault by alias or catalog id (repeatable) |
+| `chaosctl diagnose` | Run Agent 2 on the newest run (`--run <id>` for a specific one) |
+| `chaosctl report` | Generate the scored findings report (`--run <id>`, `--all`) |
+| `chaosctl eval` | Agent scoreboard from recorded runs → `reports/eval.md` |
+| `chaosctl kb` | List the fault knowledge base and run a consistency check |
+| `chaosctl dashboard --replay <run-id>` | Replay a recorded run without a cluster |
+| `chaosctl kill` | Kill switch: stop load, delete all chaos, wait for recovery |
+| `chaosctl recover --ack` | Clean up after a crash and clear the LOCKED state |
+| `chaosctl down` / `cluster-down` | Remove the application / delete the cluster |
+
+Add `--require-llm` before any command to fail instead of falling back when the LLM is unavailable. Run
+`uv run chaosctl --help` for all options.
+
+Each experiment takes 2–4 minutes. Output is written to `reports/<run-id>/` (journal, evidence, diagnosis, findings).
+
+## Deployment and containerization
+
+**What runs in containers.** The entire system under test is containerized and deployed to Kubernetes:
+
+| Component | Image | Deployed by |
 |---|---|---|
-| 0 | **Phase 0 smoke tests** | Tools installed (kind, helm). Docker raised from 3.8 GB to 6 GB. Gemini structured output works. The Interactions API took 45 s per call, so `llm.py` uses `generate_content` (6-13 s). |
-| 1 | **T1a cluster** | Kind + monitoring + Chaos Mesh up. Accepted: pod-failure auto-restored after its duration; a non-annotated namespace was protected. |
-| 2 | **T1b app** | n8n queue mode, Postgres, Redis, mock-api; W1/W2 return 200 and write orders. Docker Desktop crashed once (memory) during deploy; recovered. |
-| 3 | **T2 dependency graph** | Discovered from the live cluster (including hostnames hidden in a ConfigMap) + overlay. Blast radius, SPOFs and criticality match the plan. |
-| 4 | **T3 fault catalog + Chaos Mesh client** | Worker kill, Redis kill, and a reversible pod-failure for kill-switch tests; refuses anything else. Later extended to 15 enabled faults over PodChaos/NetworkChaos/HTTPChaos (2.6). |
-| 5 | **T4a baseline** | 3 orders/s overloaded one worker (queue kept growing), so steady load is **2 orders/s**: W1 100 %, p95 4.7 s, queue flat. |
-| 6 | **T4b safety + kill switch** | Kill-switch test 9 runs: chaos removed in 1-3 s **every time**; 7/9 within the 60 s worker-Ready target. The 2 slow ones were caused by CrashLoopBackOff from 9 faults in a row on one pod. |
-| 7 | **T5/T6 Agent 1 + guard** | Gemini plan cites real graph IDs; the guard puts E1 before E2 and gates E2 on a passed E1. |
-| 8 | **T7 experiments** | See 4.2. |
-| 9 | **Dashboard** | Live charts, markers, fate table, then step bar, system map and Agent 1 menu. |
-| 10 | **Agent 2** | Blind diagnosis with visible reasoning; **4 of 4 root causes correct**. Fixes advisory only. A blindness leak (Chaos Mesh events were visible to it) was found and fixed; the one diagnosis made before the fix was re-run blind. |
-| 11 | **RAG chat** | "Ask Agent 2" on the dashboard with cited answers. |
-| 12 | **LLM switched to Mistral** | Gemini's free-tier quota was exhausted (429s, 504s on the fallback). `llm.py` now calls the Mistral chat completions API with strict JSON-schema output; everything else is unchanged. |
-| 12 | **Cleanup** | Removed unused heartbeat workflow and redundant validate step; ranking tie-break; one-command `demo`. |
+| n8n main + workers | `docker.n8n.io/n8nio/n8n:2.42.4` | Helm chart `n8n-helm-chart` 1.15.0 (`helm-values/`) |
+| PostgreSQL | `postgres:17.6-alpine` | `k8s/postgres.yaml` (StatefulSet) |
+| Redis | `redis:7.4.5-alpine` | `k8s/redis.yaml` or `k8s/redis-hardened.yaml` |
+| Mock downstream API | `chaosctl/mock-api:0.1.0`, built from [`mock_api/Dockerfile`](mock_api/Dockerfile) | `k8s/mock-api.yaml` |
+| Chaos Mesh | upstream chart 2.8.4 | `scripts/cluster-up.sh` |
+| Prometheus / Grafana | kube-prometheus-stack 92.3.0 | `scripts/cluster-up.sh` |
 
-## 4.2 Experiment results (real runs, 10 Oct 2026)
+Images are built locally and streamed directly into the Kind node's containerd, so no registry is needed.
 
-| Run | Experiment | What happened | Agent 2 (blind) |
-|---|---|---|---|
-| r1010-155337 | **E1** worker kill, 1 worker | Active jobs → 0, queue 0 → ~52, **W1 p95 4.7 s → 29.8 s**, **W2 still "200 OK"** (silent). New worker Ready at +34 s. All 10 in-flight orders completed exactly once (we had predicted duplicates: wrong). Backlog never drained | correct, fix: run 2 workers (re-run blind after the leak fix; Gemini was over quota, so this one is the deterministic fallback) |
-| r1010-155845 | E1 + strict queue limit 20 | **Auto-stopped** ("queue_waiting 22 > 20"); load stopped, chaos removed, watchdog OK, no manual action | - |
-| r1010-160741 | E1, 1 worker | **Auto-stopped** (p95 24 s > 20 s after the 90 s grace) → E2 stays locked | - |
-| | *Engineer applied Agent 2's fix: 2 workers* | | |
-| r1010-161435 | E1 | **Skipped** by pre-flight: unhealthy warm-up (n8n-main DB connection timeouts) | - |
-| r1010-162355 | E1 | **Discarded**: laptop CPU saturated (load 46 on 8 cores) → turned Grafana/Prometheus off | - |
-| r1010-163348 | **E1** after fix | **Passed**: back to baseline in **78.8 s**. But 10 phantom successes + 11 lost-with-error among 28 in-flight | correct; found duplicate-key errors in Postgres logs |
-| r1010-163829 | **E2** Redis kill (unlocked) | Redis back in **1.2 s**, but n8n-main + workers restarted → **~60 s total outage**; auto-stopped (p95 25.8 s) | correct, fixes: Redis persistence, higher Redis timeout, idempotent inserts |
-| | *Workflows simplified (W3 + validate step removed), dashboard story added* | | |
-| r1010-214152 | **`chaosctl demo --queue-abort 20`**: Agent 1 picked **E1** | 2 workers: **no visible symptom** (no auto-stop needed), replacement Ready and SLIs back in **33.2 s**; of 8 in-flight orders, 7 completed once, **1 async order lost silently** | correct, fix: graceful shutdown |
+**What runs on the host.** The `chaosctl` controller (CLI, agents, safety controller, load generator and dashboard) is
+a Python package that runs on the host machine, not in a container. This is deliberate: the kill switch and recovery
+watchdog must keep working even if the cluster is degraded, and the load generator measures the system from outside,
+the way a customer would.
 
-### Final end-to-end test (11 Oct 2026, Linux host, cluster rebuilt from scratch)
-Two full runs of `docs/E2E_TEST_PROMPT.md`. **Run 2 (current, 11 enabled faults): 39 PASS, 4 FAIL, 0 GAP**; every
-number, failure and next action: `docs/E2E_RESULTS.md`; reports and screenshots: `docs/results/` (run 1 with E1/E2
-only: `docs/results/run1/`). Host: Arch Linux, 16 cores, 14 GiB RAM, 2 workers, live Mistral for Agent 1, Agent 2
-and the report. Baseline: W1 105/105, p95 **4.06 s**, queue 0.
+**Deployment target.** The supported deployment is a local, single-node Kind cluster, created and torn down with
+one command each:
 
-Historical AI-scored findings report over the 11 runs (current reports use the deterministic formula): overall **83.4 / 100 (degraded but recovered)**. Least resilient first:
+```bash
+uv run chaosctl cluster-up && uv run chaosctl up && uv run chaosctl bootstrap
+```
 
-| Rank | Fault | Run | Score | What happened |
-|---|---|---|---|---|
-| 1 | E11 Postgres pod kill | r1011-053323 | **31.2** failing | auto-stopped; of 8 in-flight orders 1 lost silently, 2 lost with error, 1 phantom success, 1 "success without row" |
-| 2 | E2 Redis pod kill | r1011-052657 | **37.2** failing | 1 s Redis restart → n8n-main 1×, workers 2× restarted, W2 errors, 3 phantom successes; auto-stopped |
-| 3 | E5 Mock API HTTP 500 | r1011-050940 | 65.1 fragile | W1 failures, back in 48.7 s |
-| 4 | E4 Mock API latency +2 s | r1011-051312 | 75.6 | auto-stopped, 100 % W1 errors (fault proxy also breaks mock-api's health probe) |
-| 5-13 | n8n-main kill, traffic spike, Postgres overload, worker kill ×3, disk full, hung worker, worker-Redis partition | | 93-100 | absorbed or recovered in 20-79 s; **every worker kill lost 1 async order silently** |
+```bash
+uv run chaosctl cluster-down
+```
 
-The 7 weakest/duplicate faults were disabled for the demo (`enabled: false` in `catalog.yaml`, see 2.6). The AI
-report's prose has 8 factual errors against the evidence (E2E_RESULTS T7.4): review it before showing it.
-
-## 4.3 Findings (weaknesses found)
-1. **One worker has no headroom.** After a worker kill the backlog never drains under normal load.
-2. **Silent failure:** async (W2) customers keep getting "200 OK" while nothing is processed, and n8n-main stays "Ready".
-   Health checks alone would not notice.
-3. **A 1-second Redis restart becomes a ~60-second total outage**, because n8n processes exit and restart.
-4. **Phantom successes:** after a worker dies, its jobs are retried, but the waiting customers get errors although
-   their order was saved.
-5. **Repeated faults on one pod slow recovery** (Kubernetes back-off).
-6. **Wrong prediction (good to show):** we expected duplicates after a worker kill. n8n re-ran stalled jobs and completed
-   each exactly once.
-7. **Even with 2 workers, a worker kill still loses work silently:** customers saw nothing (no errors, latency normal,
-   back in 33 s), but 1 async order that was told "200 OK" was never saved. Health and latency alone would call this a clean pass.
-8. **Jobs held by a killed worker fail instead of being retried** (E2E test, 11 Oct): every E1 run shows 2 W1 errors at
-   ~61 s, matching n8n-main's "job stalled more than maxStalledCount" (the chart sets `QUEUE_WORKER_MAX_STALLED_COUNT=1`).
-9. **The Redis cascade reproduces on a faster host:** a 1.0 s Redis restart still restarts n8n-main and both workers and
-   stops W2 too (11 Oct, r1011-025735).
-
-## 4.4 Current state of the cluster (as of the last session)
-- Kind cluster `chaos` running.
-- n8n-worker scaled to **2**. Grafana and Prometheus scaled to **0**.
-- 2 workflows published. Dashboard at :8787.
-- Run history in `state/history.json`: E1 passed twice, E2 tested once. Both experiments are now "tested", so the
-  scorer ranks the worker kill first. The guard still orders tier 1 before tier 3. **To make Agent 1's choice interesting
-  again, enable more faults (Part 5).**
-- After the 11 Oct end-to-end tests (Linux host): see `docs/E2E_RESULTS.md`. Run 1 history: E1 passed 4×,
-  aborted 1× (test limit), E2 aborted 1×. Open issues before the demo: `docs/E2E_RESULTS.md` → "Is the system demo-ready?".
-- **LLM is now Mistral** (`ministral-14b-latest`, fallback `ministral-8b-latest`). Gemini was dropped after its quota
-  ran out. If Mistral is unreachable, everything still works through the deterministic fallbacks. See the gotcha in 3.5.
-
----
-
-# Part 5: What is left (Day 2)
-
-| Priority | Task | Notes |
-|---|---|---|
-| ~~Must~~ Done | ~~2+ more failure types~~ | 18 enabled faults covering all 6 failure types on the organizers' list (2.6), each smoke-tested live; see PROGRESS.md for the end-to-end runs. Agent 2's detectors were written for pod kills and may need tuning for the new faults |
-| Done (needs a real run) | **AI-written findings report** (`chaosctl report` → `reports/<run>/findings.md` + `.json`) | Agent 2 writes it, validated and fact-checked; tested live with Mistral on synthetic runs (3/3 AI-written), not yet on real cluster evidence. See docs/KNOWLEDGE_BASE.md |
-| Done (needs a real run) | **Resilience score** (formula-calculated) | The harness computes component values from recorded measurements (`chaosctl/score.py`); Agent 2 writes the findings using those fixed scores; weights availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 %. See docs/KNOWLEDGE_BASE.md |
-| **Must** | Architecture one-pager, demo video (≤ 3 min), team form | The team form lists Mistral (model names), LangGraph, Chaos Mesh, Prometheus, Grafana, Kind, n8n; data = synthetic only |
-| **Must** | **Clean run from scratch** on a fresh clone, following only this README | `kind delete cluster --name chaos` first. Full test plan as an AI-agent prompt: docs/E2E_TEST_PROMPT.md |
-| Should | Re-run E2 after the Redis fix (`k8s/redis-hardened.yaml`) to show before/after | Stretch goal "re-run after a fix" |
-| Should | Detectability: alert rules (PrometheusRule) and when they fired | Needs Prometheus back on (CPU cost) |
-| **Must** | Mistral rate limits for demo day (see 3.5) | Check usage in console.mistral.ai, or pre-run the demo once so answers are cached |
-| Open question | Organizers: is a hosted LLM (Mistral API) OK, or must the model be open source? (gate G7) | Mistral's open-weight models (e.g. Mistral Small) can be self-hosted; `llm.py` is one function |
-| Nice | Combined failures; Grafana dashboard; SQLite checkpointer for LangGraph resume | |
-
-Rules while working (from the original plan):
-- Feature freeze at deadline - 4 h.
-- Clean run at deadline - 3 h.
-- Video at deadline - 2 h.
-- Submit 30 min early.
-- Never present a hypothesis as a fact.
-
----
-
-# Part 6: Reference
+As a safety measure, the harness refuses to act on any kube context other than the one in `CHAOSCTL_KUBE_CONTEXT`
+(default `kind-chaos`), and Chaos Mesh is restricted to the annotated `n8n-chaos` namespace. Pointing `chaosctl` at a
+shared or production cluster is not supported.
 
 ## Configuration
-- `.env`: `MISTRAL_API_KEY`, `MISTRAL_MODEL` (ministral-14b-latest), `MISTRAL_FALLBACK_MODEL` (ministral-8b-latest),
-  `CHAOSCTL_LLM_BUDGET` (30 calls per campaign), `CHAOSCTL_KUBE_CONTEXT` (kind-chaos).
-- `chaosctl/policy.yaml`:
-  - abort limits: W1 error rate 50 %, p95 20 s, queue 500
-  - tier caps (180 s)
-  - recovery deadline 120 s
-  - warm-up 60 s
-  - in-flight gate (3 requests, 90 s)
-  - fate wait 180 s
 
-## Versions
-| Component | Version |
+Environment variables (`.env`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `MISTRAL_API_KEY` | – | Mistral API key; leave empty to use deterministic fallbacks |
+| `MISTRAL_MODEL` | `ministral-14b-latest` | Primary model |
+| `MISTRAL_FALLBACK_MODEL` | `ministral-8b-latest` | Model used after repeated failures |
+| `CHAOSCTL_LLM_BUDGET` | `30` | Maximum LLM calls per campaign |
+| `CHAOSCTL_KUBE_CONTEXT` | `kind-chaos` | The only kube context the harness will use |
+| `CHAOSCTL_REQUIRE_LLM` | unset | Set to `1` to fail instead of falling back |
+
+Behaviour is defined in YAML under [`chaosctl/`](chaosctl):
+
+| File | Purpose |
 |---|---|
-| Kind node | Kubernetes 1.37.0 |
-| Chaos Mesh | 2.8.4 |
-| kube-prometheus-stack | 92.3.0 |
-| n8n | 2.42.4 (chart 1.15.0) |
-| Redis | 7.4.5 |
-| Postgres | 17.6 |
-| Python | 3.14 |
-| langgraph | 1.2.14 |
-| LLM | Mistral API (`ministral-14b-latest` / `ministral-8b-latest`) |
+| `catalog.yaml` | The only faults that may be injected: templates, targets, intensity ladders, risk tiers |
+| `policy.yaml` | Abort limits, tier rules, warm-up, in-flight gate, recovery deadlines |
+| `playbook.yaml` | The only fixes Agent 2 may recommend, with verification and rollback steps |
+| `overlay.yaml` | Declared dependencies and data flows not visible in manifests |
+| `scoring.yaml` | Resilience score component weights |
+| `knowledge/*.yaml` | Per-fault hypothesis, expected symptoms and signatures |
 
-## Third-party components and licenses
+## Safety model
+
+Safety is enforced by deterministic code. AI can only make limits stricter, never looser.
+
+- **Scoped.** Chaos Mesh acts only on the annotated `n8n-chaos` namespace; every resource uses `mode: one` and a
+  capped duration; Jobs run only allow-listed images without privileges or host access.
+- **Catalog only.** Agents choose `(fault, target, intensity)` from the catalog. They never produce YAML or commands.
+- **Risk tiers.** High-risk faults (Redis, Postgres, n8n-main) are only allowed after a low-risk experiment has passed.
+- **Automatic stop.** A 1 Hz controller aborts on error rate, latency, queue depth, collateral damage or time limit.
+- **Kill switch, three ways:** `chaosctl kill`, creating a `KILL` file in the repo root, or Ctrl-C / SIGTERM.
+- **Recovery watchdog.** Restarts workloads that do not recover and locks the system if that fails.
+- **Audit trail.** Every decision and action is appended to `reports/<run-id>/journal.jsonl`.
+- **Read-only diagnosis.** Agent 2 never changes the system; fixes are advisory.
+
+## Fault catalog
+
+| Failure class | Example faults | Mechanism |
+|---|---|---|
+| Service / container crash | worker, n8n-main, Redis, Postgres pod kill; worker pod failure | Chaos Mesh `PodChaos` |
+| Network fault | worker ↔ Redis partition | Chaos Mesh `NetworkChaos` |
+| Failed dependency | mock API HTTP 500/503, added latency | Chaos Mesh `HTTPChaos` |
+| Full disk | fill Postgres's (isolated 512 MiB) volume | Kubernetes Job |
+| Database overload | `pgbench` clients, connection exhaustion | Kubernetes Job |
+| Traffic spike | 2 → 6 or 10 requests/s | Built-in load generator |
+
+11 faults are enabled by default; others are present but disabled (`enabled: false`). Full details in
+[`chaosctl/catalog.yaml`](chaosctl/catalog.yaml) and [docs/KNOWLEDGE_BASE.md](docs/KNOWLEDGE_BASE.md).
+
+## Project structure
+
+```
+chaosctl/            Python package
+  cli.py             command-line interface
+  graph.py           dependency graph, blast radius, SPOF detection
+  agents/            Agent 1 (injection), campaign loop, Agent 2 (diagnosis, investigator, reporter)
+  chaos/             Chaos Mesh client (catalog templates only)
+  runner.py          single experiment lifecycle
+  safety.py          safety controller, kill switch, recovery watchdog
+  loadgen.py         load generator and request log
+  probes.py          Redis / Postgres / Kubernetes probes, fate classification
+  llm.py             LLM client: caching, retries, fallback, budget, redaction
+  score.py           resilience score
+  rag.py             cited chat over run records
+  dash/              dashboard server and static web UI
+k8s/                 Kubernetes manifests for the target stack
+helm-values/         Helm values for n8n, Chaos Mesh, kube-prometheus-stack
+mock_api/            mock downstream service (FastAPI, Dockerfile)
+workflows/           n8n workflows (sync and async order flows)
+scripts/             cluster and application lifecycle scripts
+tests/               pytest suite with recorded fixtures
+docs/                guides, results and screenshots
+```
+
+## Testing
+
+```bash
+uv run pytest
+```
+
+The unit test suite (276 tests) needs no cluster or API key. Live end-to-end results, including every number
+measured on a cluster rebuilt from scratch, are in [docs/E2E_RESULTS.md](docs/E2E_RESULTS.md).
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/TEAM_HANDBOOK.md](docs/TEAM_HANDBOOK.md) | In-depth internals, build log, findings and troubleshooting |
+| [docs/DEMO.md](docs/DEMO.md) | Demo runbook |
+| [docs/KNOWLEDGE_BASE.md](docs/KNOWLEDGE_BASE.md) | Fault knowledge base, report and scoring design |
+| [docs/E2E_RESULTS.md](docs/E2E_RESULTS.md) | End-to-end test results |
+| [docs/FACTS.md](docs/FACTS.md) | Verified technical facts |
+| [docs/PROGRESS.md](docs/PROGRESS.md) | Detailed development log |
+
+## Third-party components
 
 | Component | License |
 |---|---|
-| n8n (target app) | Sustainable Use License (source-available); Helm chart repo n8n-io/n8n-hosting is MIT. Organizers confirmed n8n is acceptable |
-| Chaos Mesh | Apache-2.0 |
-| kube-prometheus-stack (Prometheus, Grafana) | Apache-2.0 (Grafana: AGPL-3.0) |
-| Kind | Apache-2.0 |
+| n8n (target application) | Sustainable Use License |
+| Chaos Mesh, Kind, Prometheus | Apache-2.0 |
+| Grafana | AGPL-3.0 |
 | LangGraph | MIT |
-| Mistral API | hosted service, Mistral AI terms of use |
-| Redis 7.4 | RSALv2 / SSPLv1 dual license |
+| Redis 7.4 | RSALv2 / SSPLv1 |
 | PostgreSQL | PostgreSQL License |
-| FastAPI, pydantic, typer, httpx, rich | MIT / BSD |
+| FastAPI, pydantic, Typer, httpx, Rich | MIT / BSD |
+| Mistral API | Mistral AI terms of use |
 
-**Data used:** synthetic orders generated by our load generator only. Sent to Mistral: graph summaries, plan metadata
-and evidence summaries (secrets redacted). No personal or real business data.
+All data is synthetic, generated by the built-in load generator. Only graph summaries, plan metadata and redacted
+evidence summaries are sent to the LLM.
+
+---
+
+Built for the Bosch Hackathon *AI-Driven Chaos Engineering for Cloud-Native Resilience*.

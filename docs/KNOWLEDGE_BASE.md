@@ -61,7 +61,7 @@ fault's nature ("traffic", "packet loss", "disk full"), not generic words like "
 in `diagnosis.py` (add its id to `DETECTOR_IDS`) and, ideally, a playbook fix that `addresses` it.
 
 Faults that are not Chaos Mesh faults have executors too: `driver: job` (a Kubernetes Job from an allow-listed image,
-e.g. pgbench or the disk ballast) and `driver: loadgen` (the traffic spike). See README 2.6.
+e.g. pgbench or the disk ballast) and `driver: loadgen` (the traffic spike). See docs/TEAM_HANDBOOK.md 2.6.
 
 ## Findings report (AI-written)
 `uv run chaosctl report` (newest run), `--run <id>` (repeatable) or `--all`. Writes `reports/<run>/findings.md`
@@ -85,7 +85,7 @@ The AI writes the narrative, the harness calculates the scores, and code checks 
 - **Arithmetic** stays in code: an experiment's total is the weighted mean of the AI's component scores.
 
 If Mistral is unreachable or the answers stay invalid, a deterministic draft is written instead, labelled at the
-top as **"Deterministic draft, not AI-written"** (README rule: the LLM can never hang the demo). `--no-llm` forces
+top as **"Deterministic draft, not AI-written"** (design rule: the LLM can never hang the demo). `--no-llm` forces
 that draft. Measured on a synthetic E1 run: 3/3 runs AI-written, ~50-60 s each, scores 54-56, no fact-check flags.
 
 ## Resilience ranking

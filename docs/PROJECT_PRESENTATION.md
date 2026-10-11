@@ -717,7 +717,7 @@ An engineer. The application displays recommendations and verification guidance;
 
 | Source | Use |
 |---|---|
-| [README](../README.md) | Setup, operating guide, dashboard features, and project history |
+| [README](../README.md) | Overview, installation, usage and deployment ([TEAM_HANDBOOK](TEAM_HANDBOOK.md) has internals and project history) |
 | [E2E_RESULTS.md](E2E_RESULTS.md) | Historical live acceptance tests, run IDs, observations, failures, and report review |
 | [FACTS.md](FACTS.md) | Verified infrastructure/injection facts and environment-specific behavior |
 | [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md) | Fault extension, blind grading, report validation, and scoring methodology |

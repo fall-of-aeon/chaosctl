@@ -732,7 +732,7 @@ def stretch_goals(reports: Path | None = None, live_dashboard: bool = True) -> d
                 combined.append(f"{d.name}/{(start.get('plan') or {}).get('id')}")
     g3 = {"id": "combined_failures", "title": "Combined failures", "status": "Done" if combined else "Planned",
           "runs": combined, "scenario": "E3 load spike (2-3x load) during the E1 worker kill",
-          "needs": "the non-Chaos-Mesh executor described in README Part 5 for the load spike"}
+          "needs": "the non-Chaos-Mesh executor described in docs/TEAM_HANDBOOK.md Part 5 for the load spike"}
     return {"goals": [g1, g2, g3]}
 
 
