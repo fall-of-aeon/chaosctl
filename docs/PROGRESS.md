@@ -286,3 +286,21 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
 - New findings: HTTPChaos on mock-api also makes its readiness probe time out (mock-api leaves the Service, so
   "+2 s latency" fails 100 % of W1); every worker kill lost exactly 1 W2 order silently (3/3); a Postgres restart told
   one W1 client "OK" for an order that was never saved.
+
+## Dashboard redesign: story, live ops, compare, report (UI.md brief, 2026-10-11, branch dashboard-story)
+- Plan and design decisions: docs/UI_PLAN.md. Files: chaosctl/dash/{runs.py, static/js/*}, fix_summary.py, the
+  `fix-summary` command and the step at the end of `diagnose`, tests/test_dash_runs.py. Agents, runner, safety,
+  catalog, policy and playbook untouched.
+- Finished runs replay in the browser from reports/ + loadgen.sqlite (scrubber, 1x/4x/10x); no cluster needed.
+  Verified on r1011-021151 (E2), r1010-155845 (auto-stop) and Compare r1010-155337 vs r1010-163348.
+  Screenshots: docs/screenshots/ (1920x1080, 1366x768, 1280x720, light theme, presentation mode, mid-replay).
+- Deviations: charts are our own SVG, not a vendored uPlot/Chart.js (vendoring needs a download; offline already
+  works); emoji used where the brief asks (💥, ↻, ✓/✕), each paired with a word.
+- Peak p95 now comes from the client-side records (loadgen), not the safety trace, which stops at an abort:
+  r1010-155845 peaks at 26.0 s (5.5x), r1010-155337 at 29.8 s (6.3x, as in README 4.2).
+- LLM settings check: the dashboard prints which MISTRAL_* settings it sees at start. This process sees
+  MISTRAL_MODEL=ministral-14b-latest, so Agent 1's "MISTRAL_MODEL not set" in r1011-* came from runs started before
+  .env had the model, not from a code path.
+- Open: no findings.json exists yet, so the Report tab and Act 5 show the `chaosctl report --all` empty state;
+  combined-failure stretch goal is Planned (no run with two faults). Live ops not re-checked against a live cluster
+  from this laptop (cluster work happens on the other machine).

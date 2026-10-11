@@ -111,15 +111,16 @@ def load_stats_at(conn: sqlite3.Connection, t: float) -> dict:
                             (wf, start, end)).fetchall()
         ok = sorted(r[1] for r in rows if r[0] is not None and 200 <= r[0] < 300 and r[1] is not None)
         p95 = ok[min(len(ok) - 1, int(0.95 * len(ok)))] if ok else None
-        return len(rows), sum(1 for r in rows if r[0] is not None and 200 <= r[0] < 300), p95
+        return len(rows), sum(1 for r in rows if r[0] is not None and 200 <= r[0] < 300), (p95, ok[len(ok) // 2] if ok else None)
 
     sent10 = conn.execute("SELECT count(*) FROM requests WHERE sent_ts>=? AND sent_ts<?", (t - 10, t)).fetchone()[0]
     sent5 = conn.execute("SELECT count(*) FROM requests WHERE sent_ts>=? AND sent_ts<?", (t - 5, t)).fetchone()[0]
     out: dict = {"load_on": sent5 > 0, "rate": round(sent10 / 10, 2)}
     for wf in ("W1", "W2"):
         n, ok, _ = window(wf, t - 5, t)
-        _, _, p95 = window(wf, t - 10, t)
+        _, _, (p95, p50) = window(wf, t - 10, t)
         k = wf.lower()
+        out[f"{k}_p50"] = p50
         out[f"{k}_ok"] = round(ok / 5, 2)
         out[f"{k}_err"] = round((n - ok) / 5, 2)
         out[f"{k}_err_rate"] = round((n - ok) / n, 3) if n else None

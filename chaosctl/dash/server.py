@@ -6,6 +6,8 @@ GET /api/components        per node: derived state, pods, restarts since baselin
 GET /api/metrics?window=s  1 s points (bounded 15 min buffer)
 GET /api/events?since=ts   Kubernetes events + journal events, merged and redacted
 GET /api/agent1            Agent 1 decision card + candidates table
+GET /api/runs | /api/run/<id>/{summary,series,logs,fates,agent1,diagnosis,fix-summary,report}?exp=
+GET /api/stretch-goals | /api/compare?a=&b= | /api/report?run=
 GET /api/resilience        newest `chaosctl report` score and ranking (findings.json)
 GET /api/experiments/<id>  plan, guard verdict, fates, timeline, Agent 2 diagnosis (id "current" = active or last)
 GET /api/stream            Server-Sent Events, one message per collector tick (~1 s)
@@ -28,6 +30,88 @@ STATIC = Path(__file__).with_name("static")
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 
 
+_cache: dict = {}
+
+
+def _cached(key: tuple, fn):
+    """Finished runs do not change; cache per (endpoint, run, exp, journal size, evidence mtime)."""
+    if key not in _cache:
+        if len(_cache) > 64:
+            _cache.clear()
+        _cache[key] = fn()
+    return _cache[key]
+
+
+def run_api(path: str, arg) -> tuple[dict, int]:
+    """Finished-run endpoints (chaosctl/dash/runs.py). Return (body, status)."""
+    from chaosctl.dash import runs
+    if path == "/api/runs":
+        return {"runs": runs.list_runs()}, 200
+    if path == "/api/stretch-goals":
+        return runs.stretch_goals(), 200
+    if path == "/api/report":
+        return runs.report(run_id=arg("run", None)), 200
+    if path == "/api/compare":
+        a, b = arg("a", None), arg("b", None)
+        if not a or not b:
+            pair = (runs.stretch_goals()["goals"][0].get("pair") or {})
+            a, b = a or pair.get("a"), b or pair.get("b")
+        if not a or not b:
+            return {"error": "give ?a=<run>[/<exp>]&b=<run>[/<exp>]"}, 400
+        return _cached(("compare", a, b), lambda: runs.compare(a, b)), 200
+    parts = path.split("/")          # /api/run/<id>/<what>
+    if len(parts) != 5:
+        return {"error": "use /api/run/<run-id>/<summary|series|logs|fates|agent1|diagnosis|fix-summary|report>"}, 404
+    run_id, what, exp = parts[3], parts[4], arg("exp", None)
+    try:
+        r = runs.Run(run_id, exp)
+    except (FileNotFoundError, ValueError) as exc:
+        return {"error": str(exc)}, 404
+    stamp = ((r.dir / "journal.jsonl").stat().st_size, max((f.stat().st_mtime for f in (r.dir / "evidence").glob("*")), default=0)
+             if (r.dir / "evidence").exists() else 0)
+    if what == "summary":
+        s = _cached(("summary", run_id, r.exp_id, stamp), r.summary)
+        rep = runs.report(run_id=run_id)
+        return {**s, "narration": {**s["narration"], **({"report": model_narr_report(rep)} if rep.get("available") else {})},
+                "fix_summary": r.fix_summary, "report_available": rep.get("available")}, 200
+    if what == "series":
+        return _cached(("series", run_id, r.exp_id, stamp), r.series), 200
+    if what == "logs":
+        rows = _cached(("logs", run_id, r.exp_id, stamp), r.logs)
+        num = lambda k: float(arg(k, "")) if arg(k, "") not in ("", None) else None  # noqa: E731
+        return runs.filter_logs(rows, arg("severity", None), arg("source", None), arg("component", None), num("from"), num("to"),
+                                arg("q", None), arg("evidence", None), int(arg("page", "0")), min(500, int(arg("page_size", "200")))), 200
+    if what == "fates":
+        return _cached(("summary", run_id, r.exp_id, stamp), r.summary)["fates"], 200
+    if what == "agent1":
+        return runs.agent1(r), 200
+    if what == "diagnosis":
+        return runs.diagnosis(r), 200
+    if what == "fix-summary":
+        return ({"available": True, **r.fix_summary} if r.fix_summary else
+                {"available": False, "command": f"uv run chaosctl fix-summary --run {run_id} --exp {r.exp_id}"}), 200
+    if what == "report":
+        return runs.report(run_id=run_id), 200
+    return {"error": f"unknown endpoint {what!r}"}, 404
+
+
+def model_narr_report(rep: dict) -> str:
+    return f"Resilience score {rep['overall']['score']} / 100: {rep['overall']['verdict']}."
+
+
+def llm_settings() -> dict:
+    """Which LLM settings this process sees (names and model ids only, never the key). Agent 1 once ran with
+    MISTRAL_MODEL unset while Agent 2 had it: this line shows which process saw what."""
+    import os
+
+    from chaosctl import llm as _llm  # noqa: F401  (loads .env exactly like the agents do)
+    env = Path(__file__).resolve().parents[2] / ".env"
+    return {"env_file": str(env) if env.exists() else "missing", "MISTRAL_API_KEY": "set" if os.environ.get("MISTRAL_API_KEY") else "missing",
+            "MISTRAL_MODEL": os.environ.get("MISTRAL_MODEL") or "missing",
+            "MISTRAL_FALLBACK_MODEL": os.environ.get("MISTRAL_FALLBACK_MODEL") or "missing",
+            "CHAOSCTL_REQUIRE_LLM": os.environ.get("CHAOSCTL_REQUIRE_LLM") or "0"}
+
+
 def make_handler(hub: Hub):
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -43,7 +127,7 @@ def make_handler(hub: Hub):
             self.end_headers()
             self.wfile.write(body)
 
-        def _json(self, obj, status: int = 200) -> None:
+        def _json(self, obj, status: int = 200) -> None:  # noqa: D401
             self._send(json.dumps(obj, default=str).encode(), "application/json", status)
 
         def do_GET(self):
@@ -61,12 +145,16 @@ def make_handler(hub: Hub):
                     return self._json(hub.api_metrics(min(900.0, max(10.0, float(arg("window", "300"))))))
                 if u.path == "/api/events":
                     return self._json(hub.api_events(float(arg("since", "0"))))
+                if u.path.startswith("/api/run") or u.path in ("/api/stretch-goals", "/api/compare", "/api/report"):
+                    return self._json(*run_api(u.path, arg))
                 if u.path == "/api/resilience":
                     return self._json(hub.api_resilience())
                 if u.path == "/api/agent1":
                     return self._json(hub.api_agent1())
                 if u.path.startswith("/api/experiments/"):
                     return self._json(hub.api_experiment(u.path.rsplit("/", 1)[-1], arg("run", None)))
+                if u.path == "/api/download":
+                    return self._download(arg("path", ""))
                 if u.path == "/api/stream":
                     return self._stream()
             except ValueError as exc:
@@ -75,9 +163,23 @@ def make_handler(hub: Hub):
                 return self._json({"error": f"{type(exc).__name__}: {str(exc)[:200]}"}, 500)
             name = "index.html" if u.path in ("/", "") else u.path.lstrip("/")
             f = (STATIC / name).resolve()
-            if f.parent != STATIC.resolve() or not f.exists():
+            if STATIC.resolve() not in f.parents or not f.is_file():
                 return self._send(b"not found", "text/plain", 404)
             self._send(f.read_bytes(), TYPES.get(f.suffix, "application/octet-stream"))
+
+        def _download(self, rel: str):
+            """findings.md / findings.json under reports/ only, as a file download."""
+            from chaosctl.dash.sources import REPORTS
+            f = (REPORTS.parent / rel).resolve()
+            if f.name not in ("findings.md", "findings.json") or REPORTS.resolve() not in f.parents or not f.exists():
+                return self._json({"error": "only reports/**/findings.md or findings.json can be downloaded"}, 404)
+            body = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8" if f.suffix == ".md" else "application/json")
+            self.send_header("Content-Disposition", f'attachment; filename="{f.parent.name}-{f.name}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def _stream(self):
             self.send_response(200)
@@ -128,6 +230,9 @@ def serve(port: int = 8787, replay: str | None = None) -> None:
                 super().handle_error(request, client_address)
 
     srv = Server(("127.0.0.1", port), make_handler(hub))
+    settings = llm_settings()
+    print("dashboard LLM settings: " + ", ".join(f"{k}={v}" for k, v in settings.items()), flush=True)
+    hub.llm_settings = settings
     mode = f"REPLAY of {replay}" if replay else "live"
     print(f"dashboard ({mode}): http://127.0.0.1:{port}  (Ctrl-C to stop)")
     try:

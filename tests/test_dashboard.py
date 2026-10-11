@@ -234,13 +234,19 @@ def test_api_after_recovery_matches_evidence(replay_hub, monkeypatch):
 
 # ------------------------------------------------------------------ static page
 
-def test_page_has_no_fabricated_data_or_glyphs():
+def test_page_is_offline_read_only_and_invents_nothing():
+    """No generated numbers, nothing loaded from another host, no request that changes anything
+    (the advisory chat is the only POST). Emoji are allowed since the UI.md brief; each is paired with a word."""
     static = ROOT / "chaosctl" / "dash" / "static"
-    js = (static / "app.js").read_text()
-    assert "Math.random" not in js
-    emoji = re.compile("[\U0001F300-\U0001FAFF☀-➿⬀-⯿←-⇿✓✔✖✗✘]")
-    for f in static.iterdir():
-        assert not emoji.search(f.read_text()), f.name
+    files = [f for f in static.rglob("*") if f.is_file()]
+    text = {f.name: f.read_text() for f in files}
+    for name, t in text.items():
+        assert "Math.random" not in t, name
+        assert not re.search(r"(src|href)=[\"']https?://", t), f"{name} loads from another host"
+        assert not re.search(r"import .* from [\"']https?://", t), name
+    js = "".join(t for n, t in text.items() if n.endswith(".js"))
+    assert re.findall(r'method: "(\w+)"', js) == ["POST"] and '"/api/chat"' in js
+    assert not re.search(r"/api/(inject|kill|apply|delete|run/\S+/(start|stop))", js)
 
 
 # ------------------------------------------------------------------ resilience panel (moved from test_kb_report.py)
