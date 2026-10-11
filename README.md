@@ -302,7 +302,13 @@ the URL does the same. **Presentation** (+25 % type, less detail) and **light/da
   → 3 Agent 2 diagnoses (blind badge, model or fallback badge, reasoning stepper with evidence chips that open the log,
   root cause, offline grade) → 4 Fix summary (what broke, why, playbook fixes with effort/impact/change, verify,
   rollback) → 5 Resilience report (score, or the `chaosctl report --all` command). Then the stretch goals.
-- **Live ops**: live charts and pod swimlane, service tiles, merged error log, "Ask Agent 2" chat.
+- **Live ops**: live charts and pod swimlane, service tiles, merged error log.
+- **💬 Ask Agent 2** (header button, every tab): a side-panel conversation about the run in the run picker. Follow-up
+  questions keep context. Retrieval (RAG) puts that run's own records first (result with fate meanings, findings-report
+  analysis, diagnosis, Kubernetes events, logs), then BM25 matches from other runs, the playbook and docs; docs are
+  labelled historical so their older numbers are not presented as the current run's. Mistral must answer from those
+  sources and cite them (each source is shown and marked "this run"); if the LLM is unavailable it shows the matching
+  records and says so. Advisory only.
 - **Compare**: two runs aligned on injection (A dashed, B solid), delta table, one-line verdict, fate bars.
   Defaults to the before/after pair the stretch-goal card finds (E1 with 1 worker vs 2 workers).
 - **Report**: score gauge, components with weights, ranked experiments, findings, downloads of findings.md/.json.
@@ -318,7 +324,7 @@ the LLM writes the sentences, every command comes from `playbook.yaml`; falls ba
 **API** (all GET): live `/api/state`, `/api/components`, `/api/metrics`, `/api/events`, `/api/stream` (SSE, polling
 fallback), `/api/graph`; recorded `/api/runs`, `/api/run/<id>/{summary,series,logs,fates,agent1,diagnosis,fix-summary,
 report}?exp=`, `/api/stretch-goals`, `/api/compare?a=&b=`, `/api/report`, `/api/download?path=` (findings files only).
-Series and logs use seconds relative to injection. `POST /api/chat` is the advisory RAG chat.
+Series and logs use seconds relative to injection. `POST /api/chat {question, history?, run?}` is the advisory RAG chat behind the panel.
 
 **Where the numbers come from:** client results and latency from `state/loadgen.sqlite`; queue depth, pod readiness,
 Kubernetes events and log lines from the evidence bundle (live: Redis/Postgres via NodePort and the Kubernetes API);

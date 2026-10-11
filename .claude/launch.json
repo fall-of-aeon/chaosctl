@@ -12,6 +12,12 @@
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "chaosctl", "dashboard", "--port", "8788"],
       "port": 8788
+    },
+    {
+      "name": "dashboard-chat",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "chaosctl", "dashboard", "--port", "8789"],
+      "port": 8789
     }
   ]
 }

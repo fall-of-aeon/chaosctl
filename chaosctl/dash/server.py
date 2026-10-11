@@ -11,7 +11,7 @@ GET /api/stretch-goals | /api/compare?a=&b= | /api/report?run=
 GET /api/resilience        newest `chaosctl report` score and ranking (findings.json)
 GET /api/experiments/<id>  plan, guard verdict, fates, timeline, Agent 2 diagnosis (id "current" = active or last)
 GET /api/stream            Server-Sent Events, one message per collector tick (~1 s)
-POST /api/chat             unchanged RAG chat for the CLI/README (not used by the page)
+POST /api/chat             "Ask Agent 2" RAG chat {question, history?, run?} (chat panel; run pins that run's records)
 
 Agents (live mode only; chaosctl/dash/control.py and watcher.py):
 GET  /api/control                       Agent 1 proposal/run, kill switch, traffic, Agent 2 watcher state
@@ -263,7 +263,9 @@ def make_handler(hub: Hub, control=None, watcher=None):
             try:
                 req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0)) or 0) or b"{}")
                 question = str(req.get("question", "")).strip()[:500]
-                out = ask(question, req.get("history") or []) if question else {"answer": "Ask a question.", "sources": [], "source": "-"}
+                history = [h for h in (req.get("history") or [])[-6:] if isinstance(h, dict)]
+                run = req.get("run") if isinstance(req.get("run"), str) else None
+                out = ask(question, history, run) if question else {"answer": "Ask a question.", "sources": [], "source": "-"}
             except Exception as exc:
                 out = {"answer": f"Chat error: {type(exc).__name__}", "sources": [], "source": "error"}
             self._json(out)

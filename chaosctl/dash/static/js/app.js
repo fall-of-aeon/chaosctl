@@ -6,6 +6,7 @@ import {LogPanel} from "./logs.js";
 import * as story from "./story.js";
 import {renderReportFull, renderCompare} from "./report.js";
 import {setupAgents, updateAgents} from "./agents.js";
+import {setupChat, chatContextChanged} from "./chat.js";
 
 const S = {
   runs: [], sel: null, tab: "story", d: {}, cursor: null, playing: false, speed: 1, timer: null,
@@ -32,7 +33,7 @@ function setupChrome() {
   };
   window.addEventListener("hashchange", route);
   window.addEventListener("resize", () => redrawAll());
-  $("run-picker").onchange = () => selectRun($("run-picker").value);
+  $("run-picker").onchange = () => { selectRun($("run-picker").value); chatContextChanged(); };
   $("scrubber").oninput = () => { S.cursor = +$("scrubber").value; stop(); renderStory(); };
   $("play").onclick = () => (S.playing ? stop() : play());
   document.querySelectorAll("[data-speed]").forEach((b) => b.onclick = () => {
@@ -53,16 +54,6 @@ function setupChrome() {
     const o = ev.target.closest?.("[data-open-run]");
     if (o) { ev.preventDefault(); location.hash = "#story"; selectRun(o.dataset.openRun); }
   });
-  $("chat-form").onsubmit = async (ev) => {
-    ev.preventDefault();
-    const q = $("chat-q").value.trim(); if (!q) return;
-    $("chat-log").insertAdjacentHTML("afterbegin", `<div class="msg"><b>${esc(q)}</b>\n…</div>`);
-    try {
-      const r = await (await fetch("/api/chat", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({question: q})})).json();
-      $("chat-log").firstElementChild.innerHTML = `<b>${esc(q)}</b>\n${esc(r.answer)}\n${(r.sources || []).map((s) => `<span class="chip">${esc(s.id)}</span>`).join(" ")}
-        <span class="muted">${r.llm_used === false ? "Rule-based fallback: matching records shown, the LLM was not used" : "answered by " + esc(r.source)}</span>`;
-    } catch (e) { $("chat-log").firstElementChild.textContent = "Chat unavailable: " + e.message; }
-  };
 }
 
 function syncHeaderHeight() { document.documentElement.style.setProperty("--top-h", document.querySelector(".top").offsetHeight + "px"); }
@@ -415,6 +406,7 @@ setInterval(() => { if (S.sel === "live") refreshLiveRun(); }, 5000);
 
 setupChrome();
 setupAgents();
+setupChat(() => (S.sel && S.sel !== "live" ? S.sel : lastRunRef || S.runs[0]?.ref || null));
 syncHeaderHeight();
 route();
 backfill().then(connect);

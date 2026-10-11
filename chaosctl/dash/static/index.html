@@ -30,6 +30,7 @@
     <a role="tab" href="#report" data-tab="report">Report</a>
   </nav>
   <button class="killbtn" id="kill-btn" data-ag="kill" hidden title="Stop any running experiment now: delete all chaos, stop the load, wait for every service to be Ready (same as chaosctl kill)">⛔ Kill switch</button>
+  <button class="toggle a2btn" id="chat-open" aria-expanded="false" aria-controls="chatpanel" title="Talk to Agent 2 about the run on screen: what broke, why, and which fix to apply">💬 Ask Agent 2</button>
   <button class="toggle" id="present" aria-pressed="false" title="Larger type, less detail, wider charts">Presentation</button>
   <button class="toggle" id="theme" title="Light theme reads better on projectors">Light / dark</button>
 </header>
@@ -112,9 +113,6 @@
       <div class="card"><h2>Error log</h2><p class="what">Kubernetes events, harness, safety controller, merged.</p><div id="live-log"></div></div>
     </div>
   </div>
-  <details class="card chat" id="chat"><summary><h2>Ask Agent 2</h2><span class="what">Answers from recorded runs, diagnoses, logs and the playbook, with sources. Advisory only.</span></summary>
-    <form id="chat-form"><input id="chat-q" autocomplete="off" placeholder="Why were W2 orders lost silently?" aria-label="Question"><button>Ask</button></form>
-    <div id="chat-log"></div></details>
 </main>
 
 <!-- ============================== COMPARE ============================== -->
@@ -137,6 +135,22 @@
 <div class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-label="Error log">
   <div class="drawer-in"><header><h2>Error log</h2><button class="toggle" id="drawer-close">Close</button></header><div id="drawer-log"></div></div>
 </div>
+<!-- Ask Agent 2: conversation about the run on screen (js/chat.js) -->
+<aside class="chatpanel" id="chatpanel" hidden aria-label="Ask Agent 2">
+  <header>
+    <div><h2><span class="eyebrow a2">Agent 2</span> Ask about this run</h2>
+      <p class="what">Answers only from our recorded run data, Agent 2's diagnosis, the findings report, logs and the fix playbook, with sources. Advisory: it never changes the system.</p></div>
+    <button class="toggle" id="chat-close" aria-label="Close chat">Close</button>
+  </header>
+  <div class="chat-ctx" id="chat-ctx"></div>
+  <div class="chat-thread" id="chat-thread" aria-live="polite"></div>
+  <div class="chat-suggest" id="chat-suggest"></div>
+  <form id="chat-form" class="chat-form">
+    <textarea id="chat-q" rows="2" autocomplete="off" placeholder="Ask a follow-up, e.g. why were orders lost?" aria-label="Question for Agent 2"></textarea>
+    <button class="sendbtn">Ask</button>
+  </form>
+  <div class="chat-foot"><button type="button" class="linkbtn" id="chat-clear">New conversation</button><span class="muted">Enter to send, Shift+Enter for a new line</span></div>
+</aside>
 <div class="tip" id="tip" role="tooltip" hidden></div>
 <script type="module" src="js/app.js"></script>
 </body>
