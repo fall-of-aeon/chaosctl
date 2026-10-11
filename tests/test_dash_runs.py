@@ -116,10 +116,28 @@ def test_fates_agent1_diagnosis(reports):
 def test_fix_summary_and_report_empty_states(reports):
     fs, _ = api(f"/api/run/{RUN}/fix-summary")
     assert fs == {"available": False, "command": f"uv run chaosctl fix-summary --run {RUN} --exp exp-01"}
-    rep, _ = api(f"/api/run/{RUN}/report")
-    assert rep["available"] is False and "chaosctl report" in rep["command"]
     rep2, _ = api("/api/report")
     assert rep2["available"] is False
+
+
+def test_run_without_findings_report_gets_formula_score_from_its_evidence(reports):
+    """The story's score appears as soon as the run's evidence bundle exists, without `chaosctl report`."""
+    exp = report.load_run(reports / RUN)[0]
+    expected = score.score_experiment(exp["bundle"], exp["result"])
+    rep, _ = api(f"/api/run/{RUN}/report", exp="exp-01")
+    assert rep["available"] is True and rep["computed"] is True and rep["score_method"] == "formula"
+    assert rep["overall"]["score"] == expected["total"] and rep["overall"]["verdict"] == expected["band"]
+    assert rep["experiments"] == [{"exp_ref": f"{RUN}/exp-01", "score": expected}]
+    summ, _ = api(f"/api/run/{RUN}/summary", exp="exp-01")
+    assert summ["report_available"] is True and str(expected["total"]) in summ["narration"]["report"]
+    assert not (reports / RUN / "findings.json").exists()        # computed on read, nothing written
+
+
+def test_fix_summary_file_is_not_an_experiment(reports):
+    (reports / RUN / "evidence" / "fix_summary.json").write_text(json.dumps({"exp-01": {"summary": "x"}}))
+    assert [e["exp_id"] for e in report.load_run(reports / RUN)] == ["exp-01"]
+    rep, _ = api(f"/api/run/{RUN}/report")
+    assert [e["exp_ref"] for e in rep["experiments"]] == [f"{RUN}/exp-01"]
 
 
 def test_unknown_run_and_endpoint(reports):
@@ -224,3 +242,16 @@ def test_fix_summary_fallback_without_llm(monkeypatch, tmp_path):
     assert out["source"] == "deterministic fallback" and out["what_broke"] == "The worker was terminated without graceful shutdown."
     p = fix_summary.write(tmp_path / "run", "exp-01", out) if (tmp_path / "run" / "evidence").mkdir(parents=True) is None else None
     assert json.loads(p.read_text())["exp-01"]["source"] == "deterministic fallback"
+
+
+def test_running_experiment_shows_the_baseline_file_until_its_bundle_exists(reports):
+    """Act 0 must show the baseline while the run is going; the evidence bundle only arrives at the end."""
+    bundle = reports / RUN / "evidence" / "exp-01.json"
+    recorded = json.loads(bundle.read_text())["baseline"]
+    bundle.unlink()
+    server._cache.clear()        # other tests cached this fixture's summary under the same journal/evidence stamp
+    state = sources.STATE
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "baseline.json").write_text(json.dumps({**recorded, "w1": {**recorded["w1"], "p95_ms": 1234}}))
+    s, _ = api(f"/api/run/{RUN}/summary", exp="exp-01")
+    assert s["baseline"]["w1_p95_ms"] == 1234 and s["baseline"]["duration_s"] == recorded["duration_s"]

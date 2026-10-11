@@ -39,7 +39,7 @@ def run_dirs(reports: Path) -> list[Path]:
 
 def _bundle_files(rdir: Path):
     return (p for p in sorted((rdir / "evidence").glob("*.json"))
-            if not p.name.endswith((".plan.json", ".diagnosis.json")))
+            if not p.name.endswith((".plan.json", ".diagnosis.json")) and p.name != "fix_summary.json")
 
 
 def _read_journal(path: Path) -> list[dict]:

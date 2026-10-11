@@ -16,7 +16,8 @@ experiments:
   main_pod_kill: {recovery_deadline_s: 150}
   postgres_pod_kill: {recovery_deadline_s: 150}
 fate_wait_s: 180
-warmup_s: 60            # steady load before injection (BUILD_PLAN 11.1)
+warmup_s: 30            # steady load before injection (was 60; 30 s is enough for a stable W1 window)
+recovery_hold_s: 15     # SLIs must stay at baseline this long before recovery is confirmed (was 30)
 rules:
   never_target_outside_namespace: n8n-chaos
   tier3_requires_prior_tier1_pass: true

@@ -48,13 +48,13 @@ def redact(text: str) -> str:
 #                    COLLAPSE_S seconds (state lost; a draining backlog shrinks far slower),
 #                  - mock dependency: an error rate is configured.
 #   4. Recovering  no bad signal now, but there was one less than RECOVER_HOLD_S seconds ago
-#                  (the same 30 s hold the runner uses before calling SLIs recovered).
+#                  (the same hold the runner uses before calling SLIs recovered: policy.yaml recovery_hold_s).
 #   5. Healthy     otherwise.
 
 ERROR_RATE = 0.10
 LATENCY_RATIO = 2.0
 QUEUE_GROWTH = 5
-RECOVER_HOLD_S = 30
+RECOVER_HOLD_S = (yaml.safe_load((Path(__file__).parents[1] / "policy.yaml").read_text()) or {}).get("recovery_hold_s", 30)
 COLLAPSE_S = 3
 STATES = ("Healthy", "Degraded", "Down", "Recovering", "Unknown")
 

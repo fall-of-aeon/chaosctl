@@ -217,7 +217,7 @@ class Runner:
             return {**res, "status": "skipped", "skip_reason": "preflight", "problems": problems}
         ctl.transition(State.PREFLIGHT_OK)
 
-        warmup = self.policy.get("warmup_s", 60)  # BUILD_PLAN 11.1: steady load >= 60 s before injection
+        warmup = self.policy.get("warmup_s", 60)  # steady load before injection (policy.yaml)
         if not self.loadgen.running:
             self.loadgen.start()
             self.journal.write({"event": "warmup", "seconds": warmup})
@@ -322,6 +322,7 @@ class Runner:
                                "'unrecovered', not passed", self.journal)
         res.update({
             "status": status, "abort_reason": ctl.abort_reason, "thresholds": asdict(th),
+            "recovery_hold_s": self.policy.get("recovery_hold_s", 30),
             "timeline": {k: (round(v - t_inject, 1) if isinstance(v, float) and k != "t_inject" else v)
                          for k, v in timeline.items()},
             "recovery_time_s": round(timeline["t_slis_recovered"] - t_inject, 1) if timeline.get("t_slis_recovered") else None,
@@ -380,7 +381,7 @@ class Runner:
                       and (w1["p95_ms"] or 0) <= 1.1 * b_p95 and q.get("reachable") and q.get("wait", 0) <= b_wait + 5)
             if sli_ok:
                 healthy_since = healthy_since or now
-                if now - healthy_since >= 30:
+                if now - healthy_since >= self.policy.get("recovery_hold_s", 30):
                     tl["t_slis_recovered"] = healthy_since
                     break
             else:

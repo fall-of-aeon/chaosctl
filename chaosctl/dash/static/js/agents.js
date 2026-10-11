@@ -144,7 +144,7 @@ function proposalHtml(p, busy, blockers) {
       <button class="toggle" data-ag="replan" ${busy ? "disabled" : ""}>Pick another fault</button>
       <button class="toggle" data-ag="cancel" ${busy ? "disabled" : ""}>Discard</button></div>
     ${blockers.length ? `<ul class="blockers">${blockers.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
-    <p class="muted small-note">On approval the plan runs exactly as shown, in its own process, under the safety controller: preflight, 60 s warm-up, injection only with orders in flight, the limits above, recovery watchdog. The kill switch stops it at any moment.</p></div>`;
+    <p class="muted small-note">On approval the plan runs exactly as shown, in its own process, under the safety controller: preflight, warm-up, injection only with orders in flight, the limits above, recovery watchdog. The kill switch stops it at any moment.</p></div>`;
 }
 
 function runHtml(c, st) {

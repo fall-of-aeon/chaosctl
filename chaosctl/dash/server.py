@@ -84,7 +84,7 @@ def run_api(path: str, arg) -> tuple[dict, int]:
              if (r.dir / "evidence").exists() else 0)
     if what == "summary":
         s = _cached(("summary", run_id, r.exp_id, stamp), r.summary)
-        rep = runs.report(run_id=run_id)
+        rep = runs.report(run_id=run_id, exp_id=r.exp_id)
         return {**s, "narration": {**s["narration"], **({"report": model_narr_report(rep)} if rep.get("available") else {})},
                 "fix_summary": r.fix_summary, "report_available": rep.get("available")}, 200
     if what == "series":
@@ -104,7 +104,7 @@ def run_api(path: str, arg) -> tuple[dict, int]:
         return ({"available": True, **r.fix_summary} if r.fix_summary else
                 {"available": False, "command": f"uv run chaosctl fix-summary --run {run_id} --exp {r.exp_id}"}), 200
     if what == "report":
-        return runs.report(run_id=run_id), 200
+        return runs.report(run_id=run_id, exp_id=r.exp_id), 200
     return {"error": f"unknown endpoint {what!r}"}, 404
 
 

@@ -9,7 +9,7 @@ import {setupAgents, updateAgents} from "./agents.js";
 import {setupChat, chatContextChanged} from "./chat.js";
 
 const S = {
-  runs: [], sel: null, tab: "story", d: {}, cursor: null, playing: false, speed: 1, timer: null,
+  runs: [], sel: null, tab: "story", d: {}, cardSig: {}, cursor: null, playing: false, speed: 1, timer: null,
   live: {state: null, comps: null, points: [], events: [], ok: false, last: 0}, graphV: null,
 };
 const ACTS = [["start", "Start", "ok"], ["inject", "Agent 1 injects", "a1"], ["impact", "Impact", "fault"],
@@ -287,9 +287,16 @@ function renderStory() {
   story.narrate("n-diagnose", after ? n.diagnose : "Agent 2 diagnoses after the run ends.", !after);
   story.narrate("n-fix", after ? n.fix : "The fix summary follows the diagnosis.", !after);
   story.narrate("n-report", after ? n.report : "The report scores finished runs.", !after);
-  if (S.cardsRef !== d.ref) {
-    S.cardsRef = d.ref;
-    story.renderBaseline(s); story.renderAgent1(d.agent1, s); story.renderAgent2(d.diag); story.renderFix(d.fix, s); story.renderReportMini(d.rep);
+  // live: the run's files grow as it goes (baseline, then diagnosis, fix summary, score), so repaint each card
+  // when its own data changes; an unchanged card is left alone so open details and scroll survive
+  const running = !!d.live && !!S.live.state?.experiment?.active;
+  const cards = {baseline: [() => story.renderBaseline(s), s.baseline], agent1: [() => story.renderAgent1(d.agent1, s), d.agent1, s.limits, s.hypothesis_check],
+                 agent2: [() => story.renderAgent2(d.diag), d.diag], fix: [() => story.renderFix(d.fix, s), d.fix, s.fates, s.recovery_time_s],
+                 report: [() => story.renderReportMini(d.rep, running), d.rep, running]};
+  if (S.cardsRef !== d.ref) { S.cardsRef = d.ref; S.cardSig = {}; }
+  for (const [k, [paint, ...data]] of Object.entries(cards)) {
+    const sig = JSON.stringify(data);
+    if (S.cardSig[k] !== sig) { S.cardSig[k] = sig; paint(); }
   }
   story.renderAutostop(s, c);
   const data = replay ? {...d.series.cols, gaps: d.series.gaps, wall_t0: d.series.wall_t0} : liveSeries(s.t_inject || S.live.state?.now || 0);

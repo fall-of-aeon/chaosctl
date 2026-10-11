@@ -408,7 +408,7 @@ to keep comparison outputs. `--since` filters journal timestamps and incident st
 summaries, which lack timestamps, count only for runs starting after the cutoff. Chat fallback counts are
 shown with an unavailable rate because successful chat answers are not recorded.
 
-**One experiment takes about 5-6 minutes**: 60 s warm-up, ~3 min observation, up to 3 min to resolve in-flight requests.
+**One experiment takes about 2-4 minutes**: 30 s warm-up (`warmup_s` in `policy.yaml`), observation until SLIs have held at baseline for 15 s (`recovery_hold_s`, at most ~3 min), up to 3 min to resolve in-flight requests (usually seconds).
 
 ## 3.5 Gotchas we hit (read these)
 - **`kind load docker-image` fails** with Docker Desktop's containerd image store ("content digest not found").

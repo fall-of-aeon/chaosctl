@@ -59,3 +59,35 @@ def test_no_impact_runs_are_not_graded():
 
     lost = {"timeline": {"saw_symptom": False}, "fates": {"summary": {"lost_silently": 4}}}
     assert d.grade(diag, plan, lost)["verdict"] == "MISSED"          # silent loss is impact
+
+
+def test_evidence_ids_with_appended_details_map_to_the_allowed_id():
+    from chaosctl.agents import diagnosis as dg
+    allowed = {"ev:trace", "ev:baseline", "ev:timeline", "ev:logs:n8n-worker", "det:queue_backlog"}
+    assert dg.canonical_evidence("ev:trace: w1_ok=0 after 10.9s", allowed) == "ev:trace"
+    assert dg.canonical_evidence("ev:baseline.w2.ok=100", allowed) == "ev:baseline"
+    assert dg.canonical_evidence("ev:logs:n8n-worker: ECONNRESET", allowed) == "ev:logs:n8n-worker"
+    assert dg.canonical_evidence("ev:trace", allowed) == "ev:trace"
+    assert dg.canonical_evidence("ev:traceback", allowed) is None          # not a boundary: unknown, not ev:trace
+    assert dg.canonical_evidence("ev:logs:redis", allowed) is None
+    d = dg.Diagnosis(thoughts=[], root_cause="x", failure_chain=[], fixes=[],
+                     findings=[dg.Finding(title="a", evidence=["ev:trace: w2_ok=5", "ev:trace: q_wait=40", "ev:nope"]),
+                               dg.Finding(title="b", evidence=["ev:nope"])])
+    dg.normalize_evidence(d, allowed)
+    assert d.findings[0].evidence == ["ev:trace"]
+    assert dg.validate(d, allowed, quiet=True) == ["finding cites unknown evidence ['ev:nope']"]   # b had nothing valid
+
+
+def test_diagnosis_retries_once_with_feedback_before_falling_back(monkeypatch):
+    from chaosctl.agents import diagnosis as dg
+    calls = []
+    def fake(purpose, prompt, model_cls, journal=None, meta=None, **kw):
+        calls.append(prompt)
+        ev = ["ev:made_up"] if len(calls) == 1 else ["ev:trace"]
+        fix = next(iter(dg.PLAYBOOK))
+        return dg.Diagnosis(thoughts=[], root_cause="worker down", failure_chain=[],
+                            findings=[dg.Finding(title="t", evidence=ev)], fixes=[dg.FixPick(playbook_id=fix, why="w")])
+    monkeypatch.setattr(dg.llm, "generate_json", fake)
+    out = dg.diagnose({"trace": [], "logs": {}, "events": []})
+    assert len(calls) == 2 and "REJECTED" in calls[1]
+    assert out["llm_used"] is True and out["root_cause"] == "worker down"

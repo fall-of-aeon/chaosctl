@@ -404,11 +404,12 @@ def investigate(trigger: str, tools: ToolKit, journal=None, use_llm: bool = True
     if why_fallback is None:
         meta = {}
         try:
-            d = llm.generate_json("investigate_conclude", conclude_prompt(trigger, steps, hits), dg.Diagnosis,
-                                  journal=journal, call=llm_call, meta=meta,
-                                  prefer_model=_conclude_model())
+            allowed = allowed_evidence(steps, hits)
+            d = dg.normalize_evidence(llm.generate_json("investigate_conclude", conclude_prompt(trigger, steps, hits),
+                                                        dg.Diagnosis, journal=journal, call=llm_call, meta=meta,
+                                                        prefer_model=_conclude_model()), allowed)
             final_src = f"llm:{meta.get('source', '?')}:{meta.get('model', '?')}"
-            errs = dg.validate(d, allowed_evidence(steps, hits), quiet=dg.is_quiet(hits))
+            errs = dg.validate(d, allowed, quiet=dg.is_quiet(hits))
             if errs:
                 alerts.llm_fallback("Agent 2 (live investigation)", f"LLM diagnosis failed validation "
                                     f"({'; '.join(errs)[:200]}) -> detector-only template diagnosis", journal)

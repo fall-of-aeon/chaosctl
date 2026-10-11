@@ -127,6 +127,8 @@ class Run:
         self.fix_summary = fs.get(self.exp_id) if isinstance(fs, dict) else None
         results = sources.read_json(self.dir / "results.json") or []
         self.result = next((r for r in results if r.get("exp_id") == self.exp_id), {})
+        # recorded with the result since the hold became configurable; older runs used 30 s, a running one the policy
+        self.recovery_hold_s = self.result.get("recovery_hold_s") or (30 if self.result else model.RECOVER_HOLD_S)
         self.fault = self.plan.get("fault")
         self.target = (self.plan.get("target") or "").removeprefix("node:")
         self.entry = catalog()["faults"].get(self.fault, {})
@@ -177,10 +179,12 @@ class Run:
         if isinstance(tl.get("t_pod_ready"), (int, float)) and isinstance(tl.get("t_slis_recovered"), (int, float)) \
                 and tl["t_slis_recovered"] - tl["t_pod_ready"] > 45:
             gap_note = (f"Pod ready at T+{tl['t_pod_ready']:.0f} s but SLIs only recovered at T+{tl['t_slis_recovered']:.0f} s: "
-                        f"the harness needs W1 success and p95 within 10 % of baseline for 30 s in a row. "
+                        f"the harness needs W1 success and p95 within 10 % of baseline for {self.recovery_hold_s} s in a row. "
                         f"See the log lines between those times.")
         peak = self.peak_p95()
-        b = self.evidence.get("baseline") or {}
+        # the bundle (with its copy of the baseline) is written when the run ends; until then show the baseline file
+        # the runner loaded at start, so Act 0 has its numbers while the run is going
+        b = self.evidence.get("baseline") or ({} if self.evidence else sources.read_json(sources.STATE / "baseline.json")) or {}
         in_flight = self.inject_event.get("in_flight") or {k2: len(v) for k2, v in
                                                             ((self.plan_file.get("at_inject") or {}).get("in_flight") or {}).items()}
         summary = {
@@ -195,6 +199,7 @@ class Run:
             "plan": self.plan, "guard": self.guard, "hypothesis": self.plan.get("hypothesis"),
             "abort": self.abort_info(abort), "milestones": milestones, "gap_note": gap_note,
             "recovery_time_s": self.evidence.get("recovery_time_s", self.result.get("recovery_time_s")),
+            "recovery_hold_s": self.recovery_hold_s,
             "manual_action_needed": self.evidence.get("manual_action_needed"),
             "restarts_delta": self.evidence.get("restarts_delta") or self.result.get("restarts_delta"),
             "fates": f_rows, "baseline": {"w1_success": (b.get("w1") or {}).get("success_rate"), "w1_p95_ms": (b.get("w1") or {}).get("p95_ms"),
@@ -639,16 +644,54 @@ def diagnosis(run: Run) -> dict:
 
 # ------------------------------------------------------------------ report + stretch goals + compare
 
-def report(reports: Path | None = None, run_id: str | None = None) -> dict:
+def report(reports: Path | None = None, run_id: str | None = None, exp_id: str | None = None) -> dict:
     reports = reports or sources.REPORTS
     r = sources.find_resilience(reports, run_id) if run_id else sources.find_resilience(reports)
+    if not r and run_id:
+        r = computed_score(reports, run_id, exp_id)
     if not r:
         return {"available": False, "command": "uv run chaosctl report --all",
                 "produces": "findings.md and findings.json: ranked weaknesses, playbook fixes and a 0-100 resilience score"}
     summary = r.get("summary") or {}
     return {"available": True, **r, "weaknesses": r.get("weaknesses") or summary.get("weaknesses") or [],
             "fixes": r.get("fixes") or summary.get("fixes") or [],
-            "md_path": r["path"].replace(".json", ".md")}
+            "md_path": r["path"].replace(".json", ".md") if r.get("path") else None}
+
+
+_score_cache: dict = {}
+
+
+def computed_score(reports: Path, run_id: str, exp_id: str | None = None) -> dict | None:
+    """Resilience score of a finished run that has no `chaosctl report` yet, calculated with the same formula
+    (score.py) from its evidence bundles. No LLM, no files written; None while no bundle exists (run still going)."""
+    from chaosctl import report as rep_mod
+    from chaosctl.score import score_experiment, score_overall
+    rdir = reports / run_id
+    files = [f for f in rep_mod._bundle_files(rdir) if not exp_id or f.stem == exp_id] if (rdir / "evidence").is_dir() else []
+    if not files:
+        return None
+    key = (str(rdir), exp_id, tuple((f.name, f.stat().st_mtime, f.stat().st_size) for f in files),
+           (rdir / "results.json").stat().st_mtime if (rdir / "results.json").exists() else 0)
+    if key not in _score_cache:
+        if len(_score_cache) > 32:
+            _score_cache.clear()
+        exps = [e for e in rep_mod.load_run(rdir) if not exp_id or e["exp_id"] == exp_id]
+        rows, entries, scores = [], [], []
+        for e in exps:
+            ref, sc = f"{run_id}/{e['exp_id']}", score_experiment(e["bundle"], e["result"])
+            scores.append(sc)
+            rows.append({"exp_ref": ref, "score": sc})
+            entries.append({"exp_ref": ref, "title": e["result"].get("fault") or e["plan_item"].get("fault") or ref,
+                            "alias": None, "target": e["result"].get("target"), "status": e["result"].get("status"),
+                            "score": sc.get("total") if sc.get("scored") else None, "verdict": sc.get("band"),
+                            "components": {k: c["score"] for k, c in (sc.get("components") or {}).items()}})
+        o = score_overall(scores)
+        _score_cache[key] = {"source": "formula", "computed": True, **rep_mod.score_metadata(), "runs": [run_id],
+                             "models": [], "calibrated_on": [], "experiments": rows, "ranking": rep_mod.ranking(entries),
+                             "overall": {"score": o["mean"], "verdict": o["band"], "worst": o["worst"],
+                                         "experiments": o["experiments"]} if o else None,
+                             "path": None, "generated": max(f.stat().st_mtime for f in files)}
+    return _score_cache[key]
 
 
 def stretch_goals(reports: Path | None = None, live_dashboard: bool = True) -> dict:

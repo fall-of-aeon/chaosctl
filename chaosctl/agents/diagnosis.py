@@ -7,6 +7,7 @@ playbook are rejected; any LLM failure falls back to a templated diagnosis.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -192,6 +193,8 @@ ALLOWED FIXES (playbook ids; you may only choose from these):
 
 ALLOWED EVIDENCE IDS (a finding's "evidence" list may contain ONLY these exact strings, no free text):
 {json.dumps(sorted(evidence_ids(b, hits)))}
+Cite an id exactly as written, e.g. "ev:trace", never "ev:trace: w1_ok=0" or "ev:baseline.w2.ok=100": numbers and
+details belong in the finding's title, not in its evidence ids.
 
 {"No High or Critical detector fired: if the evidence shows no real degradation, say so as the root cause and "
  "return an EMPTY fixes list (do not invent a fix id)." if is_quiet(hits) else ""}
@@ -212,6 +215,31 @@ def fallback(hits: list[dict]) -> Diagnosis:
              for f in ranked[:3] if set(PLAYBOOK[f]["addresses"]) & set(ids)]
     return Diagnosis(thoughts=thoughts, root_cause=root, failure_chain=[h["detail"] for h in hits[:4]],
                      findings=[Finding(title=h["detail"], evidence=[h["id"]]) for h in hits], fixes=fixes)
+
+
+_ID_END = re.compile(r"[\s:.=\[(,;/]")
+
+
+def canonical_evidence(cited: str, allowed_ev: set[str]) -> str | None:
+    """The allowed id a citation refers to: exact, or an allowed id followed by details the model appended
+    ("ev:trace: w1_ok=0 after 10.9s" -> "ev:trace", "ev:baseline.w2.ok=100" -> "ev:baseline"). Longest match wins,
+    so "ev:logs:n8n-worker: ..." maps to "ev:logs:n8n-worker". None if it names no allowed id."""
+    c = cited.strip().strip("'\"`")
+    if c in allowed_ev:
+        return c
+    hits = [a for a in allowed_ev if c.startswith(a) and _ID_END.match(c[len(a):])]
+    return max(hits, key=len) if hits else None
+
+
+def normalize_evidence(d: Diagnosis, allowed_ev: set[str]) -> Diagnosis:
+    """Map each citation to its allowed id and drop unknown ones, keeping a finding that still cites something
+    valid. A finding left with nothing valid keeps its raw ids so validate() rejects it."""
+    for f in d.findings:
+        mapped = [canonical_evidence(e, allowed_ev) for e in f.evidence]
+        good = list(dict.fromkeys(m for m in mapped if m))
+        if good:
+            f.evidence = good
+    return d
 
 
 def validate(d: Diagnosis, allowed_ev: set[str], quiet: bool = False) -> list[str]:
@@ -240,9 +268,17 @@ def diagnose(bundle: dict, journal=None, use_llm: bool = True) -> dict:
     source, d, meta = "", None, {}
     if use_llm:
         try:
-            d = llm.generate_json("diagnosis", prompt(bundle, hits), Diagnosis, journal=journal, meta=meta)
+            allowed = evidence_ids(bundle, hits)
+            d = normalize_evidence(llm.generate_json("diagnosis", prompt(bundle, hits), Diagnosis, journal=journal, meta=meta),
+                                   allowed)
+            errs = validate(d, allowed, quiet=is_quiet(hits))
+            if errs:        # one retry with the errors as feedback before falling back to the template
+                fb = (f"\n\nYOUR PREVIOUS ANSWER WAS REJECTED: {'; '.join(errs)[:600]}. Fix exactly these problems: "
+                      "cite only the allowed evidence ids, exactly as written, and only playbook fix ids.")
+                d = normalize_evidence(llm.generate_json("diagnosis", prompt(bundle, hits) + fb, Diagnosis,
+                                                         journal=journal, meta=meta), allowed)
+                errs = validate(d, allowed, quiet=is_quiet(hits))
             source = f"llm:{meta.get('source', '?')}:{meta.get('model', '?')}"
-            errs = validate(d, evidence_ids(bundle, hits), quiet=is_quiet(hits))
             if errs:
                 source, d = f"fallback:invalid ({'; '.join(errs)[:120]})", None
                 alerts.llm_fallback("Agent 2 (diagnosis)", f"LLM diagnosis failed validation ({'; '.join(errs)[:200]}) "

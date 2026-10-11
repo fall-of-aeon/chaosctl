@@ -183,7 +183,7 @@ export function renderTimeline(s, cursor) {
   }).join("");
   $("timeline").innerHTML = `<div class="tl-grid">
       <div><div class="muted">Recovery time</div><div class="hero-num">${showRec ? rt + '<span class="unit"> s</span>' : DASH}</div>
-        <div class="muted" style="font-size:.8125rem">${rt != null ? "from inject until W1 success and p95 were back within 10 % of baseline for 30 s" : s.status === "running" ? "measuring" : "SLIs did not recover in the window"}</div></div>
+        <div class="muted" style="font-size:.8125rem">${rt != null ? `from inject until W1 success and p95 were back within 10 % of baseline for ${s.recovery_hold_s ?? 30} s` : s.status === "running" ? "measuring" : "SLIs did not recover in the window"}</div></div>
       <div><div class="tl-track">
           ${showRec ? `<span class="tl-bracket" style="left:${X(0)}%;width:${X(rec) - X(0)}%"><b>recovery ${rt} s</b></span>` : ""}
           <span class="tl-line"></span>${dots}
@@ -258,19 +258,30 @@ export function gauge(score, verdict, size = 260) {
     <text x="0" y="-18" text-anchor="middle" style="font:700 52px var(--display);fill:var(--text)">${esc(score)}</text>
     <text x="0" y="12" text-anchor="middle" style="font:600 15px var(--body);fill:${col}">${esc(verdict)}</text></svg>`;
 }
-export function renderReportMini(rep) {
+export function renderReportMini(rep, running) {
   const el = $("report-mini");
-  if (!rep || !rep.available || !rep.overall) {
-    el.innerHTML = `<p>No resilience report yet. This command writes it (ranked weaknesses, playbook fixes and a 0-100 score per experiment):</p>
+  if (!rep || !rep.available) {
+    el.innerHTML = running ? `<p class="muted">The resilience score is calculated from the recorded measurements as soon as the run ends.</p>`
+      : `<p>No resilience score for this run: it has no evidence bundle. A full report across runs is written by:</p>
       <pre class="cmd">${esc((rep && rep.command) || "uv run chaosctl report --all")}</pre>`;
     return;
   }
+  if (!rep.overall) {
+    const why = (rep.experiments || []).map((e) => e.score?.why).filter(Boolean)[0];
+    el.innerHTML = `<p class="muted">Not scored${why ? `: ${esc(why)}` : ": no measurable component was recorded"}.</p>`;
+    return;
+  }
   const comps = rep.ranking?.components || [];
-  const weakest = comps.slice().sort((a, b) => (a.mean ?? 101) - (b.mean ?? 101))[0];
+  const weakest = comps.filter((c) => c.mean != null).sort((a, b) => a.mean - b.mean)[0];
+  const one = rep.experiments?.length === 1 ? rep.experiments[0].score?.components || {} : null;
+  const rows = one ? `<table style="margin-top:8px"><thead><tr><th>Component</th><th class="n">Weight</th><th class="n">Score</th><th>Measured</th></tr></thead><tbody>${
+    Object.entries(one).map(([k, c]) => `<tr><td>${esc(nice(k))}</td><td class="n">${Math.round(((rep.score_weights || {})[k] || 0) * 100)} %</td>
+      <td class="n">${c.score ?? DASH}</td><td class="muted">${esc(c.why || "")}</td></tr>`).join("")}</tbody></table>` : "";
   el.innerHTML = `<div class="gauge">${gauge(rep.overall.score, rep.overall.verdict)}<div>
     <p class="big" style="font-size:1.25rem">Weakest component: <b>${esc(nice(weakest?.component || "-"))}</b>${weakest?.mean != null ? ` (${weakest.mean} / 100)` : ""}</p>
-    <p class="muted">Formula-calculated score · ${rep.overall.experiments} experiments scored · report ${esc(rep.path)}</p>
-    <p style="margin-top:8px"><a href="#report">Full report</a></p></div></div>`;
+    <p class="muted">${rep.computed ? "Calculated from this run's recorded measurements" : `Formula-calculated score · ${rep.overall.experiments} experiments scored · report ${esc(rep.path)}`}</p>
+    ${rep.score_formula ? `<p class="muted mono" style="font-size:.8125rem">${esc(rep.score_formula)}</p>` : ""}
+    ${rep.computed ? "" : `<p style="margin-top:8px"><a href="#report">Full report</a></p>`}</div></div>${rows}`;
 }
 
 // ------------------------------------------------------------------ stretch goals
