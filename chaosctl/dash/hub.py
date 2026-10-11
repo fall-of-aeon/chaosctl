@@ -110,6 +110,7 @@ class Hub(threading.Thread):
         self.state: dict = {"mode": src.mode, "collected_at": None}
         self.components: dict = {"nodes": {}, "platform": {}}
         self.started = time.time()
+        self.extras = None   # callable -> dict merged into every stream message (agent controls, set by the server)
 
     # ---------------------------------------------------------------- loop
     def run(self) -> None:
@@ -195,7 +196,7 @@ class Hub(threading.Thread):
             last = None
 
         point = {"t": round(t, 2), "load_on": sample["load_on"]}
-        for k in ("w1_ok", "w1_err", "w1_p95", "w2_ok", "w2_err"):
+        for k in ("w1_ok", "w1_err", "w1_p50", "w1_p95", "w2_ok", "w2_err"):
             point[k] = lg.get(k) if lg and lg["load_on"] else None
         point["w1_pending"] = (lg or {}).get("w1_pending") if lg and lg["load_on"] else None
         point["redis_up"] = rd.get("reachable") if rd else None
@@ -203,6 +204,9 @@ class Hub(threading.Thread):
         point["q_active"] = rd.get("active") if rd.get("reachable") else None
         point["dbsize"] = rd.get("dbsize") if rd.get("reachable") else None
         point["recon_gap"] = (pg or {}).get("recon_gap")
+        # per pod: [name, phase, ready, restarts] for the live pod swimlane
+        point["pods"] = {n: [[p.get("name"), p.get("phase"), p.get("ready"), p.get("restarts")] for p in ps]
+                         for n, ps in (pods or {}).items()} if pods is not None else None
 
         active_target = exp["target"] if exp and exp.get("active") and exp.get("t_inject") else None
         wf = model.workflow_strip(graph, {n: s["state"] for n, s in states.items()}, sample, ctx.get("baseline"), active_target)
@@ -217,9 +221,15 @@ class Hub(threading.Thread):
             self.prev_pods = pods
             self.versions["experiment"] = f"{(exp or last or {}).get('run_id')}:{(exp or last or {}).get('id')}:{ctx.get('exp_files')}"
             self.versions["agent1"] = ctx.get("agent1_key", "")
-            payload = json.dumps({"state": state, "components": comps, "point": point, "versions": dict(self.versions),
-                                  "events_tail": events[-30:]}, default=str)
+            msg = {"state": state, "components": comps, "point": point, "versions": dict(self.versions),
+                   "events_tail": events[-30:]}
             subs = list(self.subscribers)
+        if self.extras:
+            try:
+                msg.update(self.extras())
+            except Exception as exc:  # the agents panel says so; the stream keeps going
+                msg["extras_error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+        payload = json.dumps(msg, default=str)
         for q in subs:
             try:
                 q.put_nowait(payload)
@@ -581,7 +591,7 @@ class Hub(threading.Thread):
             own.append({"kind": "warning", "component": "dashboard", "reason": "map from graph.json: live cluster graph unavailable", "ts": t})
         alerts = model.alert_banner(self._every("degraded", 5, t, lambda: self.src.degraded(t)) + own)
         return {
-            "alerts": alerts, "collector_error": None,
+            "alerts": alerts, "collector_error": None, "llm_settings": getattr(self, "llm_settings", None),
             "now": t, "collected_at": t, "wall": time.time(), "mode": self.src.mode, "stale_after_s": STALE_AFTER_S,
             "replay": {"run_id": self.src.run_id, "start": self.src.start, "end": self.src.end} if self.src.mode == "replay" else None,
             "sources": srcs, "run_id": ctx.get("run_id"),

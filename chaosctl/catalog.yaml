@@ -265,7 +265,7 @@ faults:
     chaos_kind: PodChaos
     template: pod_kill
     applies_to: {nodes: [n8n-worker]}
-    enabled: true
+    enabled: false        # trimmed for the demo (2026-10-11): weaker duplicate or no measurable impact
     tier: 1
     reversible: false
     recovery_deadline_s: 120
@@ -303,7 +303,7 @@ faults:
     chaos_kind: PodChaos
     template: container_kill
     applies_to: {nodes: [n8n-worker]}
-    enabled: true
+    enabled: false        # trimmed for the demo (2026-10-11): weaker duplicate or no measurable impact
     tier: 1
     reversible: false
     recovery_deadline_s: 120
@@ -313,7 +313,7 @@ faults:
     chaos_kind: PodChaos
     template: container_kill
     applies_to: {nodes: [mock-api]}
-    enabled: true
+    enabled: false        # trimmed for the demo (2026-10-11): weaker duplicate or no measurable impact
     tier: 1
     reversible: false
     recovery_deadline_s: 120
@@ -336,7 +336,7 @@ faults:
     chaos_kind: HTTPChaos
     template: http_abort
     applies_to: {nodes: [mock-api]}
-    enabled: true
+    enabled: false        # trimmed for the demo (2026-10-11): weaker duplicate or no measurable impact
     tier: 1
     reversible: true
     max_duration_s: 60
@@ -365,7 +365,7 @@ faults:
     chaos_kind: NetworkChaos
     template: network_delay
     applies_to: {nodes: [redis]}
-    enabled: true
+    enabled: false        # trimmed for the demo (2026-10-11): weaker duplicate or no measurable impact
     tier: 2
     reversible: true
     max_duration_s: 60
@@ -378,7 +378,7 @@ faults:
     chaos_kind: NetworkChaos
     template: network_delay
     applies_to: {nodes: [postgres]}
-    enabled: true
+    enabled: false        # trimmed for the demo (2026-10-11): weaker duplicate or no measurable impact
     tier: 2
     reversible: true
     max_duration_s: 60
@@ -390,7 +390,7 @@ faults:
     chaos_kind: NetworkChaos
     template: network_loss
     applies_to: {nodes: [redis, postgres, mock-api]}
-    enabled: true
+    enabled: false        # trimmed for the demo (2026-10-11): weaker duplicate or no measurable impact
     tier: 2
     reversible: true
     max_duration_s: 60

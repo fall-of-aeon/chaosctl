@@ -37,6 +37,12 @@ Shortcut: `uv run chaosctl demo` runs steps 3-6 in one go (Agent 1 picks one exp
 
 Before: `uv run chaosctl dashboard` and open http://127.0.0.1:8787 next to the terminal.
 
+**From the dashboard only (no terminal):** press *Start steady traffic*, then *Ask Agent 1 to pick a fault*, read the
+card out loud (pick, why, prediction, limits, guard), press *Approve and inject*. Do not touch Agent 2: about a minute
+later (after the 60 s warm-up) it notices the symptoms by itself and investigates live, tool call by tool call, then
+names the root cause and fixes. When the run ends, the Story fills in with the graded diagnosis. Party trick: delete a
+pod by hand (`kubectl -n n8n-chaos delete pod -l app=redis`) and let Agent 2 find it; there is no plan to peek at.
+
 **1. Map (deliverable: services, dependencies, data flows)**: `uv run chaosctl graph`
 > "The harness discovers the services from Kubernetes and combines that with a short declared overlay. Every
 > service and dependency has an ID. It computes the blast radius: if Redis fails, everything that depends on it is

@@ -136,6 +136,24 @@ def test_same_fault_twice_on_one_target_is_rejected():
     # seen live: ministral planned mockapi_http_500 code500_d30, code503_d60, code500_d30
     item = {**ITEM, "fault": "worker_pod_kill", "target": "node:n8n-worker", "rung": "ungraceful",
             "reason": "node:n8n-worker", "cites": ["node:n8n-worker"]}
-    out = run(call=llm_plan([{**item, "id": "exp-01"}, {**item, "id": "exp-02"}]))
-    assert out["source"] == "fallback:invalid_plan"
-    assert any("already planned as exp-01" in e for e in out["errors"])
+    prompts = []
+    plan = llm_plan([{**item, "id": "exp-01"}, {**item, "id": "exp-02"}])
+    out = run(call=lambda m, p, sch: (prompts.append(p), plan(m, p, sch))[1])
+    # Mistral is shown the error and asked once more; it repeats the mistake, so only the duplicate is dropped
+    assert len(prompts) == 2 and "already planned as exp-01" in prompts[1]
+    assert out["source"].startswith("llm:") and [e.id for e in out["plan"].experiments] == ["exp-01"]
+
+
+def test_invalid_llm_plan_is_corrected_by_the_llm():
+    good = {**ITEM, "id": "exp-01", "fault": "worker_pod_kill", "target": "node:n8n-worker", "rung": "ungraceful",
+            "reason": "node:n8n-worker consumes jobs", "cites": ["node:n8n-worker"]}
+    answers = iter([[{**good, "cites": ["edge:n8n-main->mock-api"]}], [good]])   # seen live: an edge that does not exist
+    out = run(call=lambda m, p, sch: json.dumps({"experiments": next(answers)}))
+    assert out["source"].startswith("llm:") and out["plan"].experiments[0].cites == ["node:n8n-worker"]
+
+
+def test_unfixable_llm_plan_still_falls_back():
+    bad = {**ITEM, "id": "exp-01", "fault": "worker_pod_kill", "target": "node:n8n-worker", "rung": "ungraceful",
+           "reason": "r", "cites": ["edge:nowhere"]}
+    out = run(call=llm_plan([bad]))
+    assert out["source"] == "fallback:invalid_plan" and any("cites unknown ids" in e for e in out["errors"])

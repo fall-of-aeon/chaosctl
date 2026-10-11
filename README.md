@@ -250,6 +250,8 @@ image (load and disk ballast), and our own **load generator** (traffic spike).
 | *(off)* | `worker_clock_skew` | TimeChaos | n8n-worker | disabled: flaky ptrace into Node.js (3.5) | - |
 | *(test)* | `pod_failure` | PodChaos pod-failure | worker | kill-switch test only | - |
 
+**Trimmed for the demo (11 Oct):** `worker_graceful_kill`, `worker_container_kill`, `mockapi_container_kill`, `mockapi_http_abort`, `redis_latency`, `postgres_latency` and `packet_loss` are now `enabled: false` (weaker duplicates or no measurable impact in the E2E runs); 11 faults stay enabled and still cover all 6 failure types. Set `enabled: true` to bring one back.
+
 **Full disk without risking the laptop.** The postgres volume is a hostPath on the Kind node, i.e. on the laptop's disk
 (~1 TB free), so filling it directly is not an option, and Chaos Mesh's IOChaos (fake `ENOSPC`) does not work on this
 Kind setup. `scripts/pg_small_disk.sh` (run by `up.sh`) puts postgres's data on a 512 MiB loop-mounted ext4 file inside
@@ -268,49 +270,70 @@ cloud and physical-machine chaos.
 
 ## 2.7 The dashboard (`chaosctl dashboard` → http://127.0.0.1:8787)
 
-Read-only: it has no button that injects a fault or triggers the kill switch. `chaosctl dashboard --replay <run-id>`
-plays a recorded run from `reports/<run-id>/` instead (header chip "Replay"); the page code is the same in both modes.
+**The agents, live** (panel at the top of Story and Live ops, live mode only):
+- **Agent 1, on a button.** *Ask Agent 1 to pick a fault* runs the same injection agent as `chaosctl plan` (score →
+  Mistral → validate, with one self-correction if the plan cites ids that are not on the map → policy guard). The card
+  shows the pick, why (cited graph ids), the prediction, the auto-stop limits, the blast radius and the guard verdict.
+  Nothing is injected until you press **Approve and inject**: the exact approved plan then runs in its own
+  `chaosctl execute` process through the campaign graph, runtime guard, preflight and safety controller (the dashboard
+  itself injects nothing). *Pick another fault* re-plans without that fault.
+- **Agent 2, always on.** A watcher in the dashboard checks every service each second; when one stays Down or Degraded
+  for 3 s it starts a blind investigation on its own: Mistral picks read-only tools one step at a time (pod status,
+  events, service logs, queue, client SLIs, database, downstream probe, dependency map, the detectors), each step
+  streams to the page, then it writes a root cause, failure chain and playbook-only fixes (findings must cite its own
+  tool calls). It never reads the plan, the journal or Chaos Mesh objects. Records: `state/incidents/` and
+  `reports/<run-id>/investigations/`. When a run's evidence bundle appears, it also runs the graded evidence
+  diagnosis and the fix summary, so Acts 3-4 fill in without a command. *Investigate now* asks it by hand.
+- **Kill switch** (header): same as `chaosctl kill` (./KILL, delete all chaos, wait for every service Ready);
+  *Reset kill switch* = `chaosctl recover`. **Steady traffic** gives Agent 2 client signals between runs.
+- Every write is a POST with an `X-Chaosctl: 1` header (another web page cannot send it); the server listens on
+  127.0.0.1 only. Fixes are still advisory: nothing applies them.
+Works offline (no CDN; charts are our own SVG). Pick a run in the header: **LIVE** follows the cluster, any finished
+run is **REPLAYED** from `reports/<run-id>/` + `state/loadgen.sqlite` with a scrubber (1x / 4x / 10x), so the demo
+video needs no cluster. `chaosctl dashboard --replay <run-id>` opens straight on that run; `?run=<run-id>/<exp>` in
+the URL does the same. **Presentation** (+25 % type, less detail) and **light/dark** are remembered per browser.
 
-**Top to bottom (the order of the demo):**
-1. **Top bar**: run id, connection (Live / Stale / Disconnected / Replay), campaign state, kill switch (armed / triggered),
-   load generator, chart window (2 / 3 / 5 min).
-2. **Phase strip**: Map, Baseline, Agent 1 decides, Inject, Impact and auto-stop, Recover, Agent 2 diagnoses, driven by the
-   run journal.
-3. **System map** (built from the dependency graph, nothing hardcoded): zones Clients, n8n application, Queue and data,
-   External dependency, plus a muted platform lane (namespace, Chaos Mesh, Prometheus, Grafana). Arrows point to what a
-   component depends on. Each node shows one derived state (Healthy, Degraded, Down, Recovering; rule in
-   `chaosctl/dash/model.py`), pods Ready and its own live metric. During an experiment: a fault marker on the target with
-   the pod Chaos Mesh hit, T+seconds and phase, an arrow from Chaos Mesh, an amber outline on the blast radius and
-   "first symptom T+N s" under each node when the harness observed it. Under the map: a workflow strip (W1 / W2 in plain
-   words) and the BUILD_PLAN 11.1 timeline with the recovery time. Click a node for its detail panel.
-4. **Live metrics**: five tiles and three charts on one time axis with inject / symptom / recovered / auto-stop markers
-   and a band while the fault is active. "-" means no data; "Load generator off" is never shown as 0.
-5. **Agent 1 decision**: chosen experiment, reason, cited graph ids, hypothesis, guard verdict, and where the decision
-   came from (LLM model from the journal, cached, or rule-based fallback), plus the candidates table.
-6. **Impact and result**: summary and fate table of the in-flight requests.
-7. **Agent 2 blind diagnosis**: reasoning, root cause, ranked fixes with runbooks, offline grade.
-8. **Event log**: Kubernetes events and journal events, merged and redacted.
+**Tabs.**
+- **Story** (default): six acts, each opening with one plain sentence built from the run's numbers.
+  0 Start (map, baseline numbers) → 1 Agent 1 injects (choice, why with cited graph ids, prediction marked
+  *hypothesis* and later *confirmed / refuted / partly*, safety limits, guard verdict, candidates with the score split
+  into its four terms) → 2 Impact (auto-stop banner, three charts on a shared T+ axis with phase bands, markers,
+  baseline and abort lines, peak and recovery bracket; pod swimlane; recovery timeline; fate bar and table)
+  → 3 Agent 2 diagnoses (blind badge, model or fallback badge, reasoning stepper with evidence chips that open the log,
+  root cause, offline grade) → 4 Fix summary (what broke, why, playbook fixes with effort/impact/change, verify,
+  rollback) → 5 Resilience report (score, or the `chaosctl report --all` command). Then the stretch goals.
+- **Live ops**: live charts and pod swimlane, service tiles, merged error log.
+- **Agent 2 live investigation**: a parallel triage (pods, client SLIs, queue, events, Postgres silent-loss check) with
+  no LLM call, then at most 3 LLM-chosen follow-up tools and a written diagnosis on the fast `ministral-8b-latest`
+  (~25 s on a live incident; a healthy system is reported at once without an LLM). The graded evidence diagnosis after
+  a run keeps `MISTRAL_MODEL`. Each chart shows a one-line takeaway above it.
+- **Ask Agent 2** (header button, every tab): a side-panel conversation about the run in the run picker. Follow-up
+  questions keep context. Retrieval (RAG) puts that run's own records first (result with fate meanings, findings-report
+  analysis, diagnosis, Kubernetes events, logs), then BM25 matches from other runs, the playbook and docs; docs are
+  labelled historical so their older numbers are not presented as the current run's. Mistral must answer from those
+  sources and cite them (each source is shown and marked "this run"); if the LLM is unavailable it shows the matching
+  records and says so. Advisory only.
+- **Compare**: two runs aligned on injection (A dashed, B solid), delta table, one-line verdict, fate bars.
+  Defaults to the before/after pair the stretch-goal card finds (E1 with 1 worker vs 2 workers).
+- **Report**: score gauge, components with weights, ranked experiments, findings, downloads of findings.md/.json.
 
-**API** (all GET, one collector thread samples once per second and serves every browser): `/api/graph`, `/api/state`,
-`/api/components`, `/api/metrics?window=s`, `/api/events?since=ts`, `/api/agent1`, `/api/experiments/<id>`,
-`/api/stream` (Server-Sent Events; the page falls back to polling every 2 s). `POST /api/chat` (the RAG chat) is
-still served for scripts but no longer shown on the page.
+**Fallbacks are never hidden**: every AI output shows its model or a "Rule-based fallback: <reason>" badge, and the
+red banner lists every LLM fallback and harness error from the last hour (`state/degraded.jsonl`). At start the server
+prints which LLM settings it sees (names and model ids, never the key).
 
-**Where the dashboard's data comes from:**
+**Fix summary** (new LLM step): written at the end of `chaosctl diagnose` (or `chaosctl fix-summary --run <id>`) to
+`reports/<run-id>/evidence/fix_summary.json`. Blind like Agent 2 (input: the diagnosis and the chosen playbook entries);
+the LLM writes the sentences, every command comes from `playbook.yaml`; falls back to a playbook-only card.
 
-| On screen | Source | Stored |
-|---|---|---|
-| Orders, errors, latency, load on/off | our load generator records every request | `state/loadgen.sqlite` |
-| Queue waiting/active, key count | Redis via NodePort, live | not stored |
-| Reconciliation gap | Postgres (read-only probe user) via NodePort, live | not stored |
-| mock-api delay / error rate | mock-api `GET /admin` via NodePort | not stored |
-| Pods, restarts, events, Chaos Mesh resources | Kubernetes API, live | not stored |
-| Map nodes and edges, SPOF, blast radius | live cluster via `Graph.build`, every 30 s (else `graph.json`) | `graph.json` |
-| Phases, fault marker, Agent 1 choice | run journal | `reports/<run-id>/journal.jsonl` (+ `reports/plans/`) |
-| Fate table, timeline, recovery time | written when an experiment ends | `reports/<run-id>/evidence/<exp-id>.json` |
-| Agent 2 reasoning | written by `diagnose` | `reports/<run-id>/evidence/*.diagnosis.json` |
+**API** (all GET): live `/api/state`, `/api/components`, `/api/metrics`, `/api/events`, `/api/stream` (SSE, polling
+fallback), `/api/graph`; recorded `/api/runs`, `/api/run/<id>/{summary,series,logs,fates,agent1,diagnosis,fix-summary,
+report}?exp=`, `/api/stretch-goals`, `/api/compare?a=&b=`, `/api/report`, `/api/download?path=` (findings files only).
+Series and logs use seconds relative to injection. `POST /api/chat {question, history?, run?}` is the advisory RAG chat behind the panel.
 
-The dashboard keeps 15 minutes of 1 s points and the newest 600 events in memory.
+**Where the numbers come from:** client results and latency from `state/loadgen.sqlite`; queue depth, pod readiness,
+Kubernetes events and log lines from the evidence bundle (live: Redis/Postgres via NodePort and the Kubernetes API);
+phases, decisions and markers from `journal.jsonl`; fates and timeline from `evidence/<exp>.json`; diagnosis, fix
+summary and report from their JSON files. Gaps are drawn hatched with the reason ("queue not recorded ...").
 
 ---
 
@@ -364,18 +387,26 @@ uv run chaosctl graph                   # dependency map table; also writes grap
 uv run chaosctl plan --dry-run          # Agent 1's plan with reasons and guard verdicts. Never injects.
 uv run chaosctl demo                    # judge demo: Agent 1 picks ONE experiment, runs it once, Agent 2 diagnoses
 uv run chaosctl demo --queue-abort 20   # same, with a strict queue limit to show the automatic stop
-uv run chaosctl run --exp E1            # E1 = worker pod kill
+uv run chaosctl run --exp E1            # E1 = worker pod kill (add --max-experiments 1: Agent 1 may plan repeats)
 uv run chaosctl run --exp E2            # E2 = Redis pod kill (only allowed after a passed E1)
 uv run chaosctl run --exp redis_latency # any catalog fault id (2.6); repeatable
 uv run python scripts/chaos_smoke.py    # live check of every fault driver, no load (~4 min)
 uv run chaosctl --require-llm demo      # fail instead of falling back if Mistral cannot be used
 uv run chaosctl diagnose                # Agent 2 on the newest run (or: --run r1010-163829)
 uv run chaosctl report                  # AI-written findings report + score (newest run; --run ID, --all)
+uv run chaosctl eval --exclude-tests    # recorded agent scoreboard -> reports/eval.md and eval.json
 uv run chaosctl kb                      # fault knowledge base: E1/E2/... and consistency check
 uv run chaosctl kill                    # KILL SWITCH (or: touch KILL, or Ctrl-C in the run)
 uv run chaosctl recover --ack           # clean up after a crash; clears LOCKED
 uv run chaosctl killswitch-test         # kill switch acceptance test, 3× each way (about 10 min)
 ```
+
+`chaosctl eval` prints a Markdown scoreboard and writes `reports/eval.md` and `reports/eval.json` using
+recorded data only. Filter with repeated or comma-separated `--runs ID`, `--since` (ISO date/time or epoch
+seconds), and `--exclude-tests` (kill-switch runs and limits tighter than policy defaults). Use `--out-dir`
+to keep comparison outputs. `--since` filters journal timestamps and incident starts; diagnoses and fix
+summaries, which lack timestamps, count only for runs starting after the cutoff. Chat fallback counts are
+shown with an unavailable rate because successful chat answers are not recorded.
 
 **One experiment takes about 5-6 minutes**: 60 s warm-up, ~3 min observation, up to 3 min to resolve in-flight requests.
 
@@ -426,8 +457,8 @@ chaosctl/                  the Python package (the "harness")
   rag.py                   "Ask Agent 2" chat: corpus, BM25 retrieval, cited answers
   report.py                `chaosctl report`: findings.md/.json (AI-written; deterministic draft if Mistral is down)
   agents/reporter.py       Agent 2 report mode: writes + scores the report; validators and number fact-check
-  score.py, scoring.yaml   reference formula + weights (and the draft's score)
-  score_memory.py          Agent 2's earlier score judgements, used to calibrate new ones
+  score.py, scoring.yaml   measurement-based resilience formula + weights
+  score_memory.py          historical Agent 2 score judgements (legacy scoring)
   dash/                    live dashboard: sources (live/replay), hub (collector), model (pure rules), server, static page
   alerts.py                loud warnings: every fallback/harness error printed, journaled, in state/degraded.jsonl
   journal.py, kube.py      audit journal; Kubernetes client pinned to kind-chaos
@@ -470,16 +501,35 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 
 | Run | Experiment | What happened | Agent 2 (blind) |
 |---|---|---|---|
-| r1010-155337 | **E1** worker kill, 1 worker | Active jobs → 0, queue 0 → ~52, **W1 p95 4.7 s → 29.8 s**, **W2 still "200 OK"** (silent). New worker Ready at +34 s. All 10 in-flight orders completed exactly once (we had predicted duplicates: wrong). Backlog never drained | ✅ correct, fix: run 2 workers (re-run blind after the leak fix; Gemini was over quota, so this one is the deterministic fallback) |
+| r1010-155337 | **E1** worker kill, 1 worker | Active jobs → 0, queue 0 → ~52, **W1 p95 4.7 s → 29.8 s**, **W2 still "200 OK"** (silent). New worker Ready at +34 s. All 10 in-flight orders completed exactly once (we had predicted duplicates: wrong). Backlog never drained | correct, fix: run 2 workers (re-run blind after the leak fix; Gemini was over quota, so this one is the deterministic fallback) |
 | r1010-155845 | E1 + strict queue limit 20 | **Auto-stopped** ("queue_waiting 22 > 20"); load stopped, chaos removed, watchdog OK, no manual action | - |
 | r1010-160741 | E1, 1 worker | **Auto-stopped** (p95 24 s > 20 s after the 90 s grace) → E2 stays locked | - |
 | | *Engineer applied Agent 2's fix: 2 workers* | | |
 | r1010-161435 | E1 | **Skipped** by pre-flight: unhealthy warm-up (n8n-main DB connection timeouts) | - |
 | r1010-162355 | E1 | **Discarded**: laptop CPU saturated (load 46 on 8 cores) → turned Grafana/Prometheus off | - |
-| r1010-163348 | **E1** after fix | **Passed**: back to baseline in **78.8 s**. But 10 phantom successes + 11 lost-with-error among 28 in-flight | ✅ correct; found duplicate-key errors in Postgres logs |
-| r1010-163829 | **E2** Redis kill (unlocked) | Redis back in **1.2 s**, but n8n-main + workers restarted → **~60 s total outage**; auto-stopped (p95 25.8 s) | ✅ correct, fixes: Redis persistence, higher Redis timeout, idempotent inserts |
+| r1010-163348 | **E1** after fix | **Passed**: back to baseline in **78.8 s**. But 10 phantom successes + 11 lost-with-error among 28 in-flight | correct; found duplicate-key errors in Postgres logs |
+| r1010-163829 | **E2** Redis kill (unlocked) | Redis back in **1.2 s**, but n8n-main + workers restarted → **~60 s total outage**; auto-stopped (p95 25.8 s) | correct, fixes: Redis persistence, higher Redis timeout, idempotent inserts |
 | | *Workflows simplified (W3 + validate step removed), dashboard story added* | | |
-| r1010-214152 | **`chaosctl demo --queue-abort 20`**: Agent 1 picked **E1** | 2 workers: **no visible symptom** (no auto-stop needed), replacement Ready and SLIs back in **33.2 s**; of 8 in-flight orders, 7 completed once, **1 async order lost silently** | ✅ correct, fix: graceful shutdown |
+| r1010-214152 | **`chaosctl demo --queue-abort 20`**: Agent 1 picked **E1** | 2 workers: **no visible symptom** (no auto-stop needed), replacement Ready and SLIs back in **33.2 s**; of 8 in-flight orders, 7 completed once, **1 async order lost silently** | correct, fix: graceful shutdown |
+
+### Final end-to-end test (11 Oct 2026, Linux host, cluster rebuilt from scratch)
+Two full runs of `docs/E2E_TEST_PROMPT.md`. **Run 2 (current, 11 enabled faults): 39 PASS, 4 FAIL, 0 GAP**; every
+number, failure and next action: `docs/E2E_RESULTS.md`; reports and screenshots: `docs/results/` (run 1 with E1/E2
+only: `docs/results/run1/`). Host: Arch Linux, 16 cores, 14 GiB RAM, 2 workers, live Mistral for Agent 1, Agent 2
+and the report. Baseline: W1 105/105, p95 **4.06 s**, queue 0.
+
+Historical AI-scored findings report over the 11 runs (current reports use the deterministic formula): overall **83.4 / 100 (degraded but recovered)**. Least resilient first:
+
+| Rank | Fault | Run | Score | What happened |
+|---|---|---|---|---|
+| 1 | E11 Postgres pod kill | r1011-053323 | **31.2** failing | auto-stopped; of 8 in-flight orders 1 lost silently, 2 lost with error, 1 phantom success, 1 "success without row" |
+| 2 | E2 Redis pod kill | r1011-052657 | **37.2** failing | 1 s Redis restart → n8n-main 1×, workers 2× restarted, W2 errors, 3 phantom successes; auto-stopped |
+| 3 | E5 Mock API HTTP 500 | r1011-050940 | 65.1 fragile | W1 failures, back in 48.7 s |
+| 4 | E4 Mock API latency +2 s | r1011-051312 | 75.6 | auto-stopped, 100 % W1 errors (fault proxy also breaks mock-api's health probe) |
+| 5-13 | n8n-main kill, traffic spike, Postgres overload, worker kill ×3, disk full, hung worker, worker-Redis partition | | 93-100 | absorbed or recovered in 20-79 s; **every worker kill lost 1 async order silently** |
+
+The 7 weakest/duplicate faults were disabled for the demo (`enabled: false` in `catalog.yaml`, see 2.6). The AI
+report's prose has 8 factual errors against the evidence (E2E_RESULTS T7.4): review it before showing it.
 
 ## 4.3 Findings (weaknesses found)
 1. **One worker has no headroom.** After a worker kill the backlog never drains under normal load.
@@ -493,6 +543,10 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
    each exactly once.
 7. **Even with 2 workers, a worker kill still loses work silently:** customers saw nothing (no errors, latency normal,
    back in 33 s), but 1 async order that was told "200 OK" was never saved. Health and latency alone would call this a clean pass.
+8. **Jobs held by a killed worker fail instead of being retried** (E2E test, 11 Oct): every E1 run shows 2 W1 errors at
+   ~61 s, matching n8n-main's "job stalled more than maxStalledCount" (the chart sets `QUEUE_WORKER_MAX_STALLED_COUNT=1`).
+9. **The Redis cascade reproduces on a faster host:** a 1.0 s Redis restart still restarts n8n-main and both workers and
+   stops W2 too (11 Oct, r1011-025735).
 
 ## 4.4 Current state of the cluster (as of the last session)
 - Kind cluster `chaos` running.
@@ -501,6 +555,8 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 - Run history in `state/history.json`: E1 passed twice, E2 tested once. Both experiments are now "tested", so the
   scorer ranks the worker kill first. The guard still orders tier 1 before tier 3. **To make Agent 1's choice interesting
   again, enable more faults (Part 5).**
+- After the 11 Oct end-to-end tests (Linux host): see `docs/E2E_RESULTS.md`. Run 1 history: E1 passed 4×,
+  aborted 1× (test limit), E2 aborted 1×. Open issues before the demo: `docs/E2E_RESULTS.md` → "Is the system demo-ready?".
 - **LLM is now Mistral** (`ministral-14b-latest`, fallback `ministral-8b-latest`). Gemini was dropped after its quota
   ran out. If Mistral is unreachable, everything still works through the deterministic fallbacks. See the gotcha in 3.5.
 
@@ -512,7 +568,7 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 |---|---|---|
 | ~~Must~~ Done | ~~2+ more failure types~~ | 18 enabled faults covering all 6 failure types on the organizers' list (2.6), each smoke-tested live; see PROGRESS.md for the end-to-end runs. Agent 2's detectors were written for pod kills and may need tuning for the new faults |
 | Done (needs a real run) | **AI-written findings report** (`chaosctl report` → `reports/<run>/findings.md` + `.json`) | Agent 2 writes it, validated and fact-checked; tested live with Mistral on synthetic runs (3/3 AI-written), not yet on real cluster evidence. See docs/KNOWLEDGE_BASE.md |
-| Done (needs a real run) | **Resilience score** (AI-judged) | Agent 2 scores each component from the evidence with the formula (`chaosctl/score.py`) as a reference, calibrated on its earlier real judgements (`state/score_memory.jsonl`), median of 3 judgements; weights availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 %. See docs/KNOWLEDGE_BASE.md |
+| Done (needs a real run) | **Resilience score** (formula-calculated) | The harness computes component values from recorded measurements (`chaosctl/score.py`); Agent 2 writes the findings using those fixed scores; weights availability 30 %, self-recovery 25 %, latency 20 %, data integrity 15 %, detectability 10 %. See docs/KNOWLEDGE_BASE.md |
 | **Must** | Architecture one-pager, demo video (≤ 3 min), team form | The team form lists Mistral (model names), LangGraph, Chaos Mesh, Prometheus, Grafana, Kind, n8n; data = synthetic only |
 | **Must** | **Clean run from scratch** on a fresh clone, following only this README | `kind delete cluster --name chaos` first. Full test plan as an AI-agent prompt: docs/E2E_TEST_PROMPT.md |
 | Should | Re-run E2 after the Redis fix (`k8s/redis-hardened.yaml`) to show before/after | Stretch goal "re-run after a fix" |

@@ -3,72 +3,155 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>chaosctl live impact</title>
+<title>chaosctl: one experiment, start to fix</title>
 <link rel="stylesheet" href="app.css">
+<script>
+  // theme + presentation mode before first paint (stored per browser; private windows fall back to defaults)
+  try {
+    const t = localStorage.getItem("chaosctl.theme"); if (t) document.documentElement.dataset.theme = t;
+    if (localStorage.getItem("chaosctl.present") === "1") document.documentElement.classList.add("present");
+  } catch (e) {}
+</script>
 </head>
 <body>
-<header class="topbar" aria-label="Status">
-  <span class="brand">chaosctl</span>
-  <span class="mono chip" id="run-id" title="run id">-</span>
-  <span class="conn" id="conn" role="status" aria-live="polite"><span class="dot"></span><span>Connecting</span></span>
-  <span class="kv"><span class="k">Campaign</span> <span class="mono" id="campaign">-</span></span>
-  <span class="kv"><span class="k">Kill switch</span> <span id="killswitch">-</span></span>
-  <span class="kv"><span class="k">Load</span> <span id="loadgen">-</span></span>
-  <span class="spacer"></span>
-  <span class="k">Window</span>
-  <span class="seg" role="group" aria-label="Chart window">
-    <button data-win="120">2 min</button><button data-win="180" aria-pressed="true">3 min</button><button data-win="300">5 min</button>
-  </span>
+<header class="top" aria-label="Run status">
+  <div class="brand"><b>chaosctl</b><span class="sub">n8n chaos lab</span></div>
+  <label class="picker"><span class="sr">Run</span><select id="run-picker" aria-label="Choose a run"></select></label>
+  <span class="mode" id="mode" role="status">-</span>
+  <span class="kv"><span class="k">Campaign</span><span id="h-state" class="mono">-</span></span>
+  <span class="kv"><span class="k">Kill switch</span><span id="h-kill">-</span></span>
+  <span class="kv"><span class="k">Load</span><span id="h-load">-</span></span>
+  <span class="kv"><span class="k">Since injection</span><span id="h-tplus" class="mono big-t">-</span></span>
+  <span class="grow"></span>
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <a role="tab" href="#story" data-tab="story">Story</a>
+    <a role="tab" href="#live" data-tab="live">Live ops</a>
+    <a role="tab" href="#compare" data-tab="compare">Compare</a>
+    <a role="tab" href="#report" data-tab="report">Report</a>
+  </nav>
+  <button class="killbtn" id="kill-btn" data-ag="kill" hidden title="Stop any running experiment now: delete all chaos, stop the load, wait for every service to be Ready (same as chaosctl kill)">Kill switch</button>
+  <button class="toggle a2btn" id="chat-open" aria-expanded="false" aria-controls="chatpanel" title="Talk to Agent 2 about the run on screen: what broke, why, and which fix to apply">Ask Agent 2</button>
+  <button class="toggle" id="present" aria-pressed="false" title="Larger type, less detail, wider charts">Presentation</button>
+  <button class="toggle" id="theme" title="Light theme reads better on projectors">Light / dark</button>
 </header>
-
 <div class="alerts" id="alerts" role="alert" hidden></div>
-<nav class="phases" aria-label="Demo phase">
-  <ol id="phases"></ol>
-  <span class="caption" id="phase-caption"></span>
-</nav>
 
-<main>
-  <section class="row-map" id="sec-map">
-    <div class="card map-card">
-      <div class="card-head">
-        <h2>System map</h2>
-        <span class="caption">Arrow points to what the component depends on. Dashed line: logical dependency.
-          <span class="legend-blast">Amber dashed outline</span>: <span class="term" tabindex="0" title="Blast radius: every component that depends on the target, directly or through others, so it can be affected when the target fails.">blast radius</span>.</span>
-        <span class="caption right" id="exp-caption"></span>
-      </div>
-      <svg id="map" role="group" aria-label="System dependency map" preserveAspectRatio="xMidYMin meet"></svg>
-      <div class="strip" id="wf-strip" aria-label="Workflows"></div>
-      <div class="timeline" id="timeline" aria-label="Experiment timeline"></div>
+<!-- ============================== AGENTS (live only) ============================== -->
+<section class="agents" id="agents" aria-label="Agents" hidden>
+  <div class="card a1-live" id="agent1-live"></div>
+  <div class="card a2-live" id="agent2-live" aria-live="polite"></div>
+</section>
+
+<!-- ============================== STORY ============================== -->
+<main id="tab-story" class="tab" data-tab="story">
+  <nav class="rail" aria-label="Acts">
+    <ol id="rail"></ol>
+  </nav>
+  <div class="scrub" id="scrub" hidden>
+    <button id="play" class="toggle" aria-label="Play replay">Play</button>
+    <input id="scrubber" type="range" min="-60" max="200" step="1" value="0" aria-label="Replay position (seconds since injection)">
+    <span class="mono" id="scrub-t">T+0 s</span>
+    <span class="speeds" role="group" aria-label="Replay speed">
+      <button data-speed="1" aria-pressed="true">1x</button><button data-speed="4">4x</button><button data-speed="10">10x</button>
+    </span>
+  </div>
+
+  <section class="act" id="act-start" data-act="start">
+    <header class="act-head"><span class="eyebrow ok">Act 0 · Start</span><p class="narrator" id="n-start"></p></header>
+    <div class="grid-map">
+      <div class="card"><h2>System map</h2><p class="what">Arrows show which way data flows. Hover a service for what it does.</p>
+        <svg id="map" role="group" aria-label="System map" preserveAspectRatio="xMidYMin meet"></svg></div>
+      <div class="baseline" id="baseline"></div>
     </div>
-    <aside class="card detail" id="detail" aria-label="Component detail" aria-live="polite"></aside>
   </section>
 
-  <section class="card" id="sec-metrics" aria-label="Live metrics">
-    <div class="card-head"><h2>Live metrics</h2><span class="caption" id="metrics-caption">rates over the last 5 s, sampled every second</span></div>
-    <div class="tiles" id="tiles"></div>
-    <div class="charts">
-      <figure class="chart"><figcaption><span class="title">Client latency: W1 p95</span><span class="hover" id="h-lat"></span></figcaption><svg id="c-lat" role="img" aria-label="W1 p95 latency over time"></svg></figure>
-      <figure class="chart"><figcaption><span class="title">Throughput and errors</span><span class="hover" id="h-tp"></span></figcaption><svg id="c-tp" role="img" aria-label="Requests per second over time"></svg></figure>
-      <figure class="chart"><figcaption><span class="title">Redis queue: jobs waiting vs active</span><span class="hover" id="h-q"></span></figcaption><svg id="c-q" role="img" aria-label="Queue depth over time"></svg></figure>
-    </div>
-    <div class="legend" id="chart-legend"></div>
+  <section class="act" id="act-inject" data-act="inject">
+    <header class="act-head"><span class="eyebrow a1">Act 1 · Agent 1 injects</span><p class="narrator" id="n-inject"></p></header>
+    <div class="card a1-card" id="agent1"></div>
   </section>
 
-  <section class="card" id="sec-agent1" aria-label="Agent 1 decision"></section>
-  <section class="card" id="sec-impact" aria-label="Impact and result"></section>
-  <section class="card" id="sec-agent2" aria-label="Agent 2 diagnosis"></section>
-  <section class="card" id="sec-resil" aria-label="Resilience score and ranking"></section>
+  <section class="act" id="act-impact" data-act="impact">
+    <header class="act-head"><span class="eyebrow fault">Act 2 · Impact</span><p class="narrator" id="n-impact"></p></header>
+    <div id="autostop"></div>
+    <div class="card"><h2>What customers felt</h2><p class="what">Seconds since injection. Shaded: warm-up, fault active (red), recovering (amber). Dashed lines: baseline and abort limits.</p>
+      <div class="stack" id="story-charts"></div></div>
+    <div class="card"><h2>Recovery timeline</h2><p class="what">When each milestone happened, measured by the harness.</p><div id="timeline"></div></div>
+    <div class="card"><h2>Fate of the in-flight orders</h2><p class="what">Every order that was in flight at injection, looked up afterwards in Postgres.</p><div id="fates"></div></div>
+  </section>
 
-  <details class="card drawer" id="sec-events">
-    <summary><h2>Event log</h2><span class="caption" id="events-count"></span></summary>
-    <div class="filters" role="group" aria-label="Filter by source">
-      <button data-src="k8s" aria-pressed="true">Kubernetes</button>
-      <button data-src="harness" aria-pressed="true">Harness</button>
-      <button data-src="safety" aria-pressed="true">Safety</button>
-    </div>
-    <div class="scroll"><table class="events"><thead><tr><th>Time</th><th>T+</th><th>Source</th><th>Message</th></tr></thead><tbody id="events"></tbody></table></div>
-  </details>
+  <section class="act" id="act-diagnose" data-act="diagnose">
+    <header class="act-head"><span class="eyebrow a2">Act 3 · Agent 2 diagnoses</span><p class="narrator" id="n-diagnose"></p></header>
+    <div class="card a2-card" id="agent2"></div>
+  </section>
+
+  <section class="act" id="act-fix" data-act="fix">
+    <header class="act-head"><span class="eyebrow fix">Act 4 · Fix summary</span><p class="narrator" id="n-fix"></p></header>
+    <div class="card fix-card" id="fixsum"></div>
+  </section>
+
+  <section class="act" id="act-report" data-act="report">
+    <header class="act-head"><span class="eyebrow ok">Act 5 · Resilience report</span><p class="narrator" id="n-report"></p></header>
+    <div class="card" id="report-mini"></div>
+  </section>
+
+  <section class="act" id="act-stretch">
+    <header class="act-head"><span class="eyebrow">Optional stretch goals</span></header>
+    <div class="cards3" id="stretch"></div>
+  </section>
 </main>
-<script src="app.js"></script>
+
+<!-- ============================== LIVE OPS ============================== -->
+<main id="tab-live" class="tab" data-tab="live" hidden>
+  <div class="ops">
+    <div class="ops-left">
+      <div class="card"><h2>Live charts</h2><p class="what" id="live-caption">Seconds since injection; the last 5 minutes.</p>
+        <div class="stack" id="live-charts"></div></div>
+      <div class="card"><h2>Pods over time</h2><p class="what">One row per pod. Green Ready, amber not ready, red terminating; restarts marked.</p><div id="live-swim"></div></div>
+    </div>
+    <div class="ops-right">
+      <div class="card"><h2>Services</h2><p class="what">Ready pods, restarts since the experiment began, age, last termination reason.</p><div id="tiles"></div></div>
+      <div class="card"><h2>Error log</h2><p class="what">Kubernetes events, harness, safety controller, merged.</p><div id="live-log"></div></div>
+    </div>
+  </div>
+</main>
+
+<!-- ============================== COMPARE ============================== -->
+<main id="tab-compare" class="tab" data-tab="compare" hidden>
+  <div class="card"><h2>Before and after</h2><p class="what">Two runs aligned on injection (T0). A is dashed, B is solid.</p>
+    <div class="cmp-pick"><label>A <select id="cmp-a"></select></label><label>B <select id="cmp-b"></select></label></div>
+    <p class="narrator small" id="cmp-verdict"></p>
+    <div id="cmp-deltas"></div></div>
+  <div class="card"><h2>Charts</h2><div class="stack" id="cmp-charts"></div></div>
+  <div class="card"><h2>Fate of the in-flight orders</h2><div class="two" id="cmp-fates"></div></div>
+</main>
+
+<!-- ============================== REPORT ============================== -->
+<main id="tab-report" class="tab" data-tab="report" hidden>
+  <div id="report-full"></div>
+  <section><h2 class="section-title">Optional stretch goals</h2><div class="cards3" id="stretch2"></div></section>
+</main>
+
+<!-- log drawer (full screen) -->
+<div class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-label="Error log">
+  <div class="drawer-in"><header><h2>Error log</h2><button class="toggle" id="drawer-close">Close</button></header><div id="drawer-log"></div></div>
+</div>
+<!-- Ask Agent 2: conversation about the run on screen (js/chat.js) -->
+<aside class="chatpanel" id="chatpanel" hidden aria-label="Ask Agent 2">
+  <header>
+    <div><h2><span class="eyebrow a2">Agent 2</span> Ask about this run</h2>
+      <p class="what">Answers only from our recorded run data, Agent 2's diagnosis, the findings report, logs and the fix playbook, with sources. Advisory: it never changes the system.</p></div>
+    <button class="toggle" id="chat-close" aria-label="Close chat">Close</button>
+  </header>
+  <div class="chat-ctx" id="chat-ctx"></div>
+  <div class="chat-thread" id="chat-thread" aria-live="polite"></div>
+  <div class="chat-suggest" id="chat-suggest"></div>
+  <form id="chat-form" class="chat-form">
+    <textarea id="chat-q" rows="2" autocomplete="off" placeholder="Ask a follow-up, e.g. why were orders lost?" aria-label="Question for Agent 2"></textarea>
+    <button class="sendbtn">Ask</button>
+  </form>
+  <div class="chat-foot"><button type="button" class="linkbtn" id="chat-clear">New conversation</button><span class="muted">Enter to send, Shift+Enter for a new line</span></div>
+</aside>
+<div class="tip" id="tip" role="tooltip" hidden></div>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

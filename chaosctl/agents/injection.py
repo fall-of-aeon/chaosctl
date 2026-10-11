@@ -21,6 +21,8 @@ from chaosctl.safety import Thresholds
 WEIGHTS = {"criticality": 0.4, "untested": 0.3, "info_gain": 0.2, "tier_risk": 0.1}
 START_WHEN = re.compile(r"^in_flight>=\d+$")
 MAX_GUARD_LOOPS = 2
+MAX_FIX_LOOPS = 1
+EXP_ERR = re.compile(r"^(exp-\d+):")
 
 
 # ------------------------------------------------------------ schemas
@@ -293,6 +295,8 @@ class InjState(TypedDict, total=False):
     errors: list[str]
     feedback: str | None
     loops: int
+    fix_loops: int           # self-corrections after a failed validation (at most MAX_FIX_LOOPS)
+    retry: bool
     verdicts: list[GuardVerdict]
     notes: list[str]
 
@@ -307,7 +311,7 @@ def build_injection_agent(journal: Journal | None = None, llm_call=None):
             if not scored:
                 alerts.warn("Agent 1", f"none of {s['only']} is an enabled catalog fault for this graph; nothing to plan", j)
         j.write({"event": "agent1_scored", "candidates": scored})
-        return {"scored": scored, "loops": 0, "feedback": None}
+        return {"scored": scored, "loops": 0, "fix_loops": 0, "retry": False, "feedback": None}
 
     def fallback_plan(s: InjState) -> LLMPlan:
         return templated_plan(s["graph"], s["scored"], max_plan(s["policy"]))
@@ -332,11 +336,24 @@ def build_injection_agent(journal: Journal | None = None, llm_call=None):
         errs = validate(s["plan"], s["graph"], s["scored"])
         if errs:
             j.write({"event": "agent1_invalid", "errors": errs, "source": s["source"]})
+            if is_llm(s["source"]) and s.get("fix_loops", 0) < MAX_FIX_LOOPS:
+                # self-correction: show Mistral exactly what failed and ask again (same pattern as the guard loop)
+                fb = ("your plan failed validation: " + "; ".join(errs) + ". Cite only node/edge/wf ids that appear in "
+                      "the dependency map above, and only (target, fault, rung) combinations from the candidate list.")
+                j.write({"event": "agent1_self_correct", "errors": errs})
+                return {"feedback": fb, "fix_loops": s.get("fix_loops", 0) + 1, "retry": True, "errors": errs}
+            bad_ids = {m.group(1) for e in errs if (m := EXP_ERR.match(e))}
+            keep = [e for e in s["plan"].experiments if e.id not in bad_ids]
+            if is_llm(s["source"]) and keep and all(EXP_ERR.match(e) for e in errs):
+                # still wrong after the retry: keep the experiments that are valid instead of discarding the LLM plan
+                alerts.warn("Agent 1 (planner)", f"dropped {sorted(bad_ids)} after a failed self-correction "
+                            f"({'; '.join(errs)[:200]}); kept {len(keep)} valid LLM experiment(s)", j, kind="warning")
+                return {"plan": LLMPlan(experiments=keep), "errors": [], "retry": False}
             if is_llm(s["source"]):
                 alerts.llm_fallback("Agent 1 (planner)", f"LLM plan failed validation ({'; '.join(errs)[:300]}) "
                                     "-> deterministic plan used instead", j)
-            return {"plan": fallback_plan(s), "source": "fallback:invalid_plan", "errors": errs}
-        return {"errors": []}
+            return {"plan": fallback_plan(s), "source": "fallback:invalid_plan", "errors": errs, "retry": False}
+        return {"errors": [], "retry": False}
 
     def guard(s: InjState) -> InjState:
         plan, verdicts, notes = policy_guard(s["plan"], s["graph"], s["catalog"], s["policy"], s.get("history", []))
@@ -369,6 +386,6 @@ def build_injection_agent(journal: Journal | None = None, llm_call=None):
     g.add_edge(START, "score")
     g.add_edge("score", "select")
     g.add_edge("select", "validate")
-    g.add_edge("validate", "guard")
+    g.add_conditional_edges("validate", lambda s: "select" if s.get("retry") else "guard", {"select": "select", "guard": "guard"})
     g.add_conditional_edges("guard", after_guard, {"select": "select", END: END})
     return g.compile()

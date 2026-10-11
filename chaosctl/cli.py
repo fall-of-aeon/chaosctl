@@ -211,7 +211,9 @@ def run(exp: list[str] = typer.Option(None, help="fault alias (E1, E2, ... see `
         auto: bool = typer.Option(False, help="run the whole planned campaign"),
         approve: bool = typer.Option(False, help="ask before each injection"),
         llm: bool = typer.Option(True, "--llm/--no-llm"),
-        queue_abort: int = typer.Option(None, help="override queue_waiting abort threshold (stricter only)")):
+        queue_abort: int = typer.Option(None, help="override queue_waiting abort threshold (stricter only)"),
+        max_experiments: int = typer.Option(None, "--max-experiments", min=1,
+                                            help="run at most N planned experiments (e.g. 1: one experiment per fault)")):
     """Run experiments through the campaign graph under the safety controller."""
     from chaosctl.agents.campaign import build_campaign
     from chaosctl.runner import Runner, load_policy
@@ -234,7 +236,8 @@ def run(exp: list[str] = typer.Option(None, help="fault alias (E1, E2, ... see `
     camp = build_campaign(runner, _live_graph, policy, runner.journal, approve_fn=approve_fn)
     console.print(f"run id {runner.run_id}; journal {runner.dir / 'journal.jsonl'}")
     try:
-        state = camp.invoke({"only": only, "use_llm": llm}, {"recursion_limit": 100})
+        state = camp.invoke({"only": only, "use_llm": llm, "max_experiments": max_experiments},
+                            {"recursion_limit": 100})
     finally:
         runner.loadgen.stop()
         runner.ctl.stop()
@@ -292,6 +295,43 @@ def demo(queue_abort: int = typer.Option(None, help="strict queue limit to show 
         raise typer.Exit(0)
     console.rule("[bold]7 · Agent 2 diagnoses, blind[/bold]")
     diagnose(run=runner.run_id, exp=res["exp_id"], llm=llm, pace=0.8)
+
+
+@app.command("execute", hidden=True)
+def execute(proposal: Path = typer.Option(..., help="proposal JSON written by the dashboard on Approve"),
+            run_id: str = typer.Option(..., "--run-id")):
+    """Run ONE experiment a human approved in the dashboard, exactly as approved (no re-planning), under the
+    safety controller. The runtime guard and preflight still re-check it. Agent 2 (the dashboard's watcher)
+    diagnoses the evidence when it appears."""
+    from chaosctl.agents.campaign import build_campaign
+    from chaosctl.runner import Runner, load_policy
+
+    p = json.loads(proposal.read_text())
+    runner = Runner(run_id=run_id)
+    # Agent 1's planning events, so this run's Story shows the decision it was approved from
+    for e in p.get("planning_events") or []:
+        runner.journal.write({k: v for k, v in e.items() if k != "ts"} | {"planned_at": e.get("ts")})
+    runner.start_safety()
+    camp = build_campaign(runner, _live_graph, load_policy(), runner.journal)
+    console.print(f"run id {runner.run_id}: approved {p['item']['fault']} -> {p['item']['target']} ({p['item']['rung']})")
+    try:
+        state = camp.invoke({"only": None, "max_experiments": 1, "use_llm": True,
+                             "preplanned": {k: p[k] for k in ("item", "verdict", "source", "proposal_id") if k in p}},
+                            {"recursion_limit": 50})
+    finally:
+        runner.loadgen.stop()
+        runner.ctl.stop()
+    (runner.dir / "results.json").write_text(json.dumps(state.get("results", []), indent=2, default=str))
+    res = (state.get("results") or [None])[0]
+    if not res:
+        console.print("[red]Nothing ran.[/red]")
+        raise typer.Exit(1)
+    console.print(f"{res['exp_id']} {res['fault']} -> {res['target']}: {res['status']}")
+    for k in ("skip_reason", "problems", "abort_reason", "recovery_time_s", "manual_action_needed"):
+        if res.get(k) is not None:
+            console.print(f"  {k}: {res[k]}")
+    if res.get("fates"):
+        console.print(f"  in-flight orders: {res['fates']['summary']}")
 
 
 @app.command("ks-hold", hidden=True)
@@ -380,7 +420,7 @@ def killswitch_test(via: list[str] = typer.Option(["cli", "file", "signal"]), re
 @app.command()
 def dashboard(port: int = 8787,
               replay: str = typer.Option(None, help="serve a recorded run from reports/<run-id>/ instead of live data")):
-    """Live impact dashboard (open http://127.0.0.1:8787 next to the terminal). Read-only."""
+    """Live dashboard (open http://127.0.0.1:8787): Agent 1 on a button with human approval, Agent 2 always watching."""
     from chaosctl.dash.server import serve
 
     serve(port, replay)
@@ -436,6 +476,33 @@ def diagnose(run: str = typer.Option(None, help="run id (default: newest)"), exp
                       f"blind root cause {shown}"
                       + ("" if out["llm_used"] else " [bold red](graded the TEMPLATE diagnosis, not the LLM: does not "
                                                     "count as an Agent 2 result)[/bold red]"))
+    _write_fix_summary(rdir, exp, out, llm)
+
+
+def _write_fix_summary(rdir: Path, exp: str, diag: dict, use_llm: bool) -> dict:
+    """Fix summary card (chaosctl/fix_summary.py): blind, playbook-only fixes, stored for the dashboard."""
+    from chaosctl import fix_summary
+    from chaosctl.journal import Journal
+
+    out = fix_summary.build(diag, use_llm=use_llm, journal=Journal(rdir / "journal.jsonl"))
+    path = fix_summary.write(rdir, exp, out)
+    color = "green" if out["source"].startswith("llm") else "bold red"
+    console.print(f"\n[bold]6. Fix summary[/bold] [{color}]({out['source']})[/{color}] -> {path.relative_to(ROOT)}")
+    console.print(f"   what broke: {out['what_broke']}\n   why: {out['why']}")
+    for i, f in enumerate(out["fixes"], 1):
+        console.print(f"   {i}. {f['action']} [dim]({f['playbook_id']}; verify: {f['verify']})[/dim]")
+    return out
+
+
+@app.command("fix-summary")
+def fix_summary_cmd(run: str = typer.Option(..., help="run id"), exp: str = "exp-01",
+                    llm: bool = typer.Option(True, "--llm/--no-llm")):
+    """Regenerate the fix summary of a diagnosed experiment (what broke, why, fix, verify, rollback)."""
+    rdir = ROOT / "reports" / run
+    diag_p = rdir / "evidence" / f"{exp}.diagnosis.json"
+    if not diag_p.exists():
+        raise typer.BadParameter(f"{diag_p} not found: run `chaosctl diagnose --run {run} --exp {exp}` first")
+    _write_fix_summary(rdir, exp, json.loads(diag_p.read_text()), llm)
 
 
 @app.command()
@@ -457,7 +524,7 @@ def report(run: list[str] = typer.Option(None, help="run id(s); default: newest 
     if data["source"] != "llm":
         console.print(f"[yellow]{data['source']}[/yellow]")
     if o := data["overall"]:
-        console.print(f"[bold]Resilience score{' (Agent 2)' if data['source'] == 'llm' else ''}: "
+        console.print(f"[bold]Resilience score (formula): "
                       f"{o['score']} / 100 ({o['verdict']})[/bold]  ranking, least resilient first:")
         for e in data["ranking"]["experiments"]:
             console.print(f"  {e['rank'] or '-'}. {e['exp_ref']} {e['alias'] or ''} {e['title']}: "
@@ -468,6 +535,28 @@ def report(run: list[str] = typer.Option(None, help="run id(s); default: newest 
         if data["unverified_numbers"]:
             console.print(f"[yellow]fact-check flagged numbers: {data['unverified_numbers']}[/yellow]")
     console.print(f"written: {out} and {out.with_suffix('.json')}")
+
+
+@app.command("eval")
+def eval_cmd(runs: list[str] = typer.Option(None, "--runs", help="run id(s), repeat or comma-separate; default: all"),
+             since: str = typer.Option(None, help="only data recorded at/after this ISO date-time or epoch seconds"),
+             exclude_tests: bool = typer.Option(False, "--exclude-tests",
+                                                help="skip ks-* kill-switch runs and runs with test (tightened) limits"),
+             out_dir: Path = typer.Option(None, help="where eval.md / eval.json go (default: reports/)")):
+    """Agent scoreboard from recorded runs only (no LLM calls): diagnosis accuracy, plan validity, fallback rates,
+    fact-check pass rate, LLM calls/latency, live investigation time. Writes reports/eval.md and eval.json."""
+    from chaosctl import scoreboard
+
+    reports = ROOT / "reports"
+    try:
+        scoreboard.parse_since(since)
+    except ValueError:
+        raise typer.BadParameter("expected an ISO date-time or epoch seconds", param_hint="--since") from None
+    data = scoreboard.evaluate(reports, ROOT / "state", runs=scoreboard.split_runs(runs), since=since,
+                               exclude_tests=exclude_tests)
+    md, js = scoreboard.write(data, out_dir or reports)
+    print(md.read_text())
+    console.print(f"written: {md} and {js}")
 
 
 @app.command()

@@ -12,7 +12,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from chaosctl.agents.injection import GuardVerdict, LLMPlan, build_injection_agent, runtime_guard
+from chaosctl.agents.injection import GuardVerdict, LLMPlan, PlanItem, build_injection_agent, runtime_guard
 from chaosctl.chaos.chaosmesh import load_catalog
 from chaosctl.graph import Graph
 from chaosctl.journal import Journal
@@ -41,6 +41,7 @@ class CampaignState(TypedDict, total=False):
     queue: list[str]          # exp ids left to run
     only: list[str] | None    # restrict to these faults
     max_experiments: int | None
+    preplanned: dict | None   # {"item", "verdict", "source", "proposal_id"}: a plan a human approved
     results: list[dict]
     stop_reason: str | None
 
@@ -55,6 +56,13 @@ def build_campaign(runner, graph_loader, policy: dict, journal: Journal, approve
                 "history": load_history(), "results": [], "stop_reason": None}
 
     def plan(s: CampaignState) -> CampaignState:
+        pre = s.get("preplanned")
+        if pre:   # approved by a human in the dashboard: run exactly that, the runtime guard still re-checks it
+            item, verdict = PlanItem.model_validate(pre["item"]), GuardVerdict.model_validate(pre["verdict"])
+            journal.write({"event": "human_approved", "exp_id": item.id, "fault": item.fault, "target": item.target,
+                           "rung": item.rung, "proposal": pre.get("proposal_id"), "via": pre.get("via", "dashboard")})
+            return {"plan": LLMPlan(experiments=[item]), "verdicts": [verdict], "plan_source": pre.get("source", "?"),
+                    "queue": [item.id]}
         out = agent.invoke({"graph": s["graph"], "catalog": s["catalog"], "policy": s["policy"],
                             "history": s["history"], "use_llm": s.get("use_llm", True), "only": s.get("only")})
         exps = out["plan"].experiments

@@ -1,0 +1,1345 @@
+{
+  "source": "fallback:AI writer unavailable: call budget of 30 exhausted",
+  "runs": [
+    "r1011-044913",
+    "r1011-050622",
+    "r1011-050940",
+    "r1011-051312",
+    "r1011-051604",
+    "r1011-051950",
+    "r1011-052352",
+    "r1011-052657",
+    "r1011-052955",
+    "r1011-053323",
+    "r1011-053831"
+  ],
+  "overall": {
+    "score": 84.9,
+    "verdict": "degraded but recovered",
+    "worst": 35.5,
+    "experiments": 13
+  },
+  "ranking": {
+    "experiments": [
+      {
+        "exp_ref": "r1011-053323/exp-01",
+        "title": "Postgres pod kill",
+        "alias": "E11",
+        "target": "postgres",
+        "status": "aborted",
+        "score": 35.5,
+        "verdict": "failing",
+        "rank": 1,
+        "weakest": "latency"
+      },
+      {
+        "exp_ref": "r1011-052657/exp-01",
+        "title": "Redis pod kill",
+        "alias": "E2",
+        "target": "redis",
+        "status": "aborted",
+        "score": 40.2,
+        "verdict": "failing",
+        "rank": 2,
+        "weakest": "latency"
+      },
+      {
+        "exp_ref": "r1011-050940/exp-01",
+        "title": "Mock API returns HTTP 500/503",
+        "alias": "E5",
+        "target": "mock-api",
+        "status": "completed",
+        "score": 64.9,
+        "verdict": "fragile",
+        "rank": 3,
+        "weakest": "latency"
+      },
+      {
+        "exp_ref": "r1011-051312/exp-01",
+        "title": "Mock API latency",
+        "alias": "E4",
+        "target": "mock-api",
+        "status": "aborted",
+        "score": 84.0,
+        "verdict": "degraded but recovered",
+        "rank": 4,
+        "weakest": "self_recovery"
+      },
+      {
+        "exp_ref": "r1011-052955/exp-01",
+        "title": "n8n-main pod kill",
+        "alias": "E10",
+        "target": "n8n-main",
+        "status": "completed",
+        "score": 93.9,
+        "verdict": "resilient",
+        "rank": 5,
+        "weakest": "availability"
+      },
+      {
+        "exp_ref": "r1011-051950/exp-01",
+        "title": "Traffic spike",
+        "alias": "E3",
+        "target": "n8n-main",
+        "status": "completed",
+        "score": 95.4,
+        "verdict": "resilient",
+        "rank": 6,
+        "weakest": "self_recovery"
+      },
+      {
+        "exp_ref": "r1011-051604/exp-01",
+        "title": "Postgres overload",
+        "alias": "E7",
+        "target": "postgres",
+        "status": "completed",
+        "score": 97.5,
+        "verdict": "resilient",
+        "rank": 7,
+        "weakest": "self_recovery"
+      },
+      {
+        "exp_ref": "r1011-044913/exp-02",
+        "title": "Worker pod kill",
+        "alias": "E1",
+        "target": "n8n-worker",
+        "status": "completed",
+        "score": 97.7,
+        "verdict": "resilient",
+        "rank": 8,
+        "weakest": "data_integrity"
+      },
+      {
+        "exp_ref": "r1011-044913/exp-03",
+        "title": "Worker pod kill",
+        "alias": "E1",
+        "target": "n8n-worker",
+        "status": "completed",
+        "score": 97.8,
+        "verdict": "resilient",
+        "rank": 9,
+        "weakest": "data_integrity"
+      },
+      {
+        "exp_ref": "r1011-044913/exp-01",
+        "title": "Worker pod kill",
+        "alias": "E1",
+        "target": "n8n-worker",
+        "status": "completed",
+        "score": 97.9,
+        "verdict": "resilient",
+        "rank": 10,
+        "weakest": "data_integrity"
+      },
+      {
+        "exp_ref": "r1011-053831/exp-01",
+        "title": "Postgres disk full",
+        "alias": "E8",
+        "target": "postgres",
+        "status": "completed",
+        "score": 98.6,
+        "verdict": "resilient",
+        "rank": 11,
+        "weakest": "self_recovery"
+      },
+      {
+        "exp_ref": "r1011-050622/exp-01",
+        "title": "Worker pod failure (hung worker)",
+        "alias": null,
+        "target": "n8n-worker",
+        "status": "completed",
+        "score": 100.0,
+        "verdict": "resilient",
+        "rank": 12,
+        "weakest": "self_recovery"
+      },
+      {
+        "exp_ref": "r1011-052352/exp-01",
+        "title": "Worker-Redis network partition",
+        "alias": null,
+        "target": "n8n-worker",
+        "status": "completed",
+        "score": 100.0,
+        "verdict": "resilient",
+        "rank": 13,
+        "weakest": "availability"
+      }
+    ],
+    "components": [
+      {
+        "component": "latency",
+        "weight": 0.2,
+        "mean": 76.7,
+        "n": 13
+      },
+      {
+        "component": "availability",
+        "weight": 0.3,
+        "mean": 85.6,
+        "n": 13
+      },
+      {
+        "component": "self_recovery",
+        "weight": 0.25,
+        "mean": 87.8,
+        "n": 13
+      },
+      {
+        "component": "data_integrity",
+        "weight": 0.15,
+        "mean": 89.5,
+        "n": 13
+      },
+      {
+        "component": "detectability",
+        "weight": 0.1,
+        "mean": null,
+        "n": 0
+      }
+    ]
+  },
+  "weaknesses": [
+    {
+      "id": "lost_work",
+      "severity": "Critical",
+      "details": [
+        "1 in-flight requests never produced a row (1 after a 200 OK)",
+        "1 in-flight requests never produced a row (1 after a 200 OK)",
+        "1 in-flight requests never produced a row (1 after a 200 OK)",
+        "3 in-flight requests never produced a row (1 after a 200 OK)"
+      ],
+      "seen_in": [
+        "r1011-044913/exp-01",
+        "r1011-044913/exp-02",
+        "r1011-044913/exp-03",
+        "r1011-053323/exp-01"
+      ],
+      "fixes": [
+        "redis_persistence",
+        "async_status_callback",
+        "graceful_shutdown",
+        "http_retry_backoff",
+        "postgres_ha"
+      ]
+    },
+    {
+      "id": "ingress_down",
+      "severity": "Critical",
+      "details": [
+        "W2 webhooks failed too in 20 samples: requests were not even accepted",
+        "W2 webhooks failed too in 7 samples: requests were not even accepted",
+        "W2 webhooks failed too in 4 samples: requests were not even accepted"
+      ],
+      "seen_in": [
+        "r1011-052657/exp-01",
+        "r1011-052955/exp-01",
+        "r1011-053323/exp-01"
+      ],
+      "fixes": [
+        "webhook_processors"
+      ]
+    },
+    {
+      "id": "sync_errors",
+      "severity": "High",
+      "details": [
+        "130 of 389 W1 requests failed after the start (33%)",
+        "6 of 41 W1 requests failed after the start (15%)",
+        "75 of 124 W1 requests failed after the start (60%)",
+        "45 of 280 W1 requests failed after the start (16%)",
+        "18 of 29 W1 requests failed after the start (62%)"
+      ],
+      "seen_in": [
+        "r1011-050940/exp-01",
+        "r1011-051312/exp-01",
+        "r1011-052657/exp-01",
+        "r1011-052955/exp-01",
+        "r1011-053323/exp-01"
+      ],
+      "fixes": [
+        "http_retry_backoff",
+        "http_timeout_budget",
+        "db_connection_pooling",
+        "postgres_ha"
+      ]
+    },
+    {
+      "id": "latency_degradation",
+      "severity": "High",
+      "details": [
+        "W1 p95 peaked at 23.7 s vs baseline 4.1 s",
+        "W1 p95 peaked at 24.0 s vs baseline 4.1 s",
+        "W1 p95 peaked at 24.1 s vs baseline 4.1 s"
+      ],
+      "seen_in": [
+        "r1011-050940/exp-01",
+        "r1011-052657/exp-01",
+        "r1011-053323/exp-01"
+      ],
+      "fixes": [
+        "scale_workers",
+        "stalled_job_tuning",
+        "http_timeout_budget",
+        "db_connection_pooling",
+        "autoscale_workers"
+      ]
+    },
+    {
+      "id": "backlog_not_drained",
+      "severity": "High",
+      "details": [
+        "queue still 34 waiting at end of window; SLIs never returned to baseline",
+        "queue still 15 waiting at end of window; SLIs never returned to baseline"
+      ],
+      "seen_in": [
+        "r1011-051312/exp-01",
+        "r1011-053323/exp-01"
+      ],
+      "fixes": [
+        "scale_workers",
+        "queue_depth_alert",
+        "autoscale_workers"
+      ]
+    },
+    {
+      "id": "db_errors",
+      "severity": "High",
+      "details": [
+        "24 database error log lines, e.g. 'connect ECONNREFUSED 10.96.40.51:8080'",
+        "4 database error log lines, e.g. 'Postgres pool client error: terminating connection due to administrator command'"
+      ],
+      "seen_in": [
+        "r1011-051312/exp-01",
+        "r1011-053323/exp-01"
+      ],
+      "fixes": [
+        "db_connection_pooling",
+        "disk_usage_alert",
+        "postgres_ha"
+      ]
+    },
+    {
+      "id": "dependency_restart",
+      "severity": "High",
+      "details": [
+        "n8n-main restarted 1x",
+        "n8n-main restarted -1x"
+      ],
+      "seen_in": [
+        "r1011-052657/exp-01",
+        "r1011-052955/exp-01"
+      ],
+      "fixes": [
+        "redis_timeout_threshold",
+        "webhook_processors"
+      ]
+    },
+    {
+      "id": "silent_async_failure",
+      "severity": "High",
+      "details": [
+        "W2 clients kept getting 200 OK while sync traffic degraded / nothing was processed",
+        "W2 clients kept getting 200 OK while sync traffic degraded / nothing was processed"
+      ],
+      "seen_in": [
+        "r1011-050940/exp-01",
+        "r1011-051312/exp-01"
+      ],
+      "fixes": [
+        "async_status_callback"
+      ]
+    },
+    {
+      "id": "queue_backlog",
+      "severity": "Medium",
+      "details": [
+        "waiting jobs rose to 39 while workers were busy (active up to 20): demand exceeded throughput",
+        "waiting jobs rose to 39 while workers were busy (active up to 20): demand exceeded throughput",
+        "waiting jobs rose to 59 while workers were busy (active up to 20): demand exceeded throughput"
+      ],
+      "seen_in": [
+        "r1011-050940/exp-01",
+        "r1011-051312/exp-01",
+        "r1011-051950/exp-01"
+      ],
+      "fixes": [
+        "autoscale_workers"
+      ]
+    },
+    {
+      "id": "phantom_success",
+      "severity": "Medium",
+      "details": [
+        "3 clients got an error but the work was done",
+        "1 clients got an error but the work was done"
+      ],
+      "seen_in": [
+        "r1011-052657/exp-01",
+        "r1011-053323/exp-01"
+      ],
+      "fixes": [
+        "idempotency_keys"
+      ]
+    }
+  ],
+  "fixes": [
+    {
+      "id": "postgres_ha",
+      "by_agent2": 3,
+      "best_rank": 0,
+      "why": "Mitigates Postgres write failures during transient worker issues.",
+      "addresses": [
+        "db_errors",
+        "lost_work",
+        "sync_errors"
+      ],
+      "title": "Highly available Postgres with automatic failover",
+      "effort": "high",
+      "impact": "high",
+      "verify": "re-run postgres_pod_kill: failover in seconds, orders keep being saved"
+    },
+    {
+      "id": "async_status_callback",
+      "by_agent2": 3,
+      "best_rank": 0,
+      "why": "Allows W2 clients to detect real job outcomes, reducing silent failures.",
+      "addresses": [
+        "lost_work",
+        "silent_async_failure"
+      ],
+      "title": "Give async (W2) clients a way to learn the real outcome",
+      "effort": "medium",
+      "impact": "high",
+      "verify": "reconciliation gap (accepted W2 without a row after 30 s) stays 0 during E1"
+    },
+    {
+      "id": "graceful_shutdown",
+      "by_agent2": 3,
+      "best_rank": 0,
+      "why": "Prevents abrupt worker termination and reduces risk of lost work during pod restarts.",
+      "addresses": [
+        "lost_work"
+      ],
+      "title": "Keep graceful shutdown for planned worker stops",
+      "effort": "low",
+      "impact": "low",
+      "verify": "graceful worker stop loses no jobs"
+    },
+    {
+      "id": "worker_health_probe",
+      "by_agent2": 3,
+      "best_rank": 0,
+      "why": "Prevents future undetected worker failures by probing Redis connectivity and Python availability before marking workers ready.",
+      "addresses": [],
+      "title": "Worker readiness that checks Redis, not just the process",
+      "effort": "low",
+      "impact": "medium",
+      "verify": "worker goes NotReady when Redis is unreachable"
+    },
+    {
+      "id": "autoscale_workers",
+      "by_agent2": 3,
+      "best_rank": 1,
+      "why": "addresses ['backlog_not_drained', 'queue_backlog']",
+      "addresses": [
+        "backlog_not_drained",
+        "latency_degradation",
+        "queue_backlog"
+      ],
+      "title": "Scale workers on queue depth",
+      "effort": "medium",
+      "impact": "high",
+      "verify": "re-run traffic_spike x5: workers scale out, the backlog drains during the spike"
+    },
+    {
+      "id": "redis_timeout_threshold",
+      "by_agent2": 3,
+      "best_rank": 1,
+      "why": "Mitigates transient worker restarts by increasing Redis timeout thresholds, reducing false queue stalls.",
+      "addresses": [
+        "dependency_restart"
+      ],
+      "title": "Raise QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD above typical Redis restart time",
+      "effort": "low",
+      "impact": "medium",
+      "verify": "n8n-main restart count unchanged during E2"
+    },
+    {
+      "id": "scale_workers",
+      "by_agent2": 3,
+      "best_rank": 2,
+      "why": "Mitigates impact if workers fail by ensuring redundancy (addresses `consumers_down`).",
+      "addresses": [
+        "backlog_not_drained",
+        "latency_degradation"
+      ],
+      "title": "Run at least 2 n8n workers",
+      "effort": "low",
+      "impact": "high",
+      "verify": "kubectl -n n8n-chaos get deploy n8n-worker  # READY 2/2, then re-run E1"
+    },
+    {
+      "id": "db_connection_pooling",
+      "by_agent2": 2,
+      "best_rank": 0,
+      "why": "addresses ['db_errors', 'sync_errors']",
+      "addresses": [
+        "db_errors",
+        "latency_degradation",
+        "sync_errors"
+      ],
+      "title": "Bound and pool database connections",
+      "effort": "medium",
+      "impact": "high",
+      "verify": "re-run postgres_overload hold85: n8n keeps saving orders, no 'too many clients' errors"
+    },
+    {
+      "id": "http_retry_backoff",
+      "by_agent2": 2,
+      "best_rank": 0,
+      "why": "Mitigates downstream HTTP timeouts by retrying failed calls with backoff, addressing sync_errors and lost_work.",
+      "addresses": [
+        "lost_work",
+        "sync_errors"
+      ],
+      "title": "Retry the downstream HTTP call with backoff",
+      "effort": "low",
+      "impact": "high",
+      "verify": "re-run mockapi_http_500 / mockapi_http_abort: W1 errors drop to ~0 for a 30 s outage"
+    },
+    {
+      "id": "redis_persistence",
+      "by_agent2": 2,
+      "best_rank": 0,
+      "why": "Enables Redis AOF persistence to recover in-flight jobs after worker crashes.",
+      "addresses": [
+        "lost_work"
+      ],
+      "title": "Enable Redis AOF persistence on a PVC",
+      "effort": "medium",
+      "impact": "high",
+      "verify": "redis-cli -p 16379 CONFIG GET appendonly  # yes, then re-run E2"
+    },
+    {
+      "id": "webhook_processors",
+      "by_agent2": 1,
+      "best_rank": 0,
+      "why": "Decouples webhook processing from n8n-main to prevent ingress downtime during restarts, addressing both `dependency_restart` and `ingress_down`.",
+      "addresses": [
+        "dependency_restart",
+        "ingress_down"
+      ],
+      "title": "Run webhook processors separately from n8n-main, more than one",
+      "effort": "medium",
+      "impact": "high",
+      "verify": "re-run main_pod_kill: webhooks keep answering"
+    },
+    {
+      "id": "http_timeout_budget",
+      "by_agent2": 1,
+      "best_rank": 1,
+      "why": "Set shorter timeouts for downstream calls to fail fast and avoid worker stalls during dependency slowdowns.",
+      "addresses": [
+        "latency_degradation",
+        "sync_errors"
+      ],
+      "title": "Give the downstream call a timeout shorter than the client's wait",
+      "effort": "low",
+      "impact": "medium",
+      "verify": "re-run mockapi_latency past_timeout: W1 gets a fast, explicit error instead of hanging"
+    },
+    {
+      "id": "queue_depth_alert",
+      "by_agent2": 1,
+      "best_rank": 2,
+      "why": "Improves observability of queue backlog and consumer downtime, helping detect similar issues faster.",
+      "addresses": [
+        "backlog_not_drained"
+      ],
+      "title": "Alert on queue depth and on zero active consumers",
+      "effort": "low",
+      "impact": "medium",
+      "verify": "rule fires within 15 s during E1"
+    },
+    {
+      "id": "disk_usage_alert",
+      "by_agent2": 0,
+      "best_rank": 99,
+      "why": null,
+      "addresses": [
+        "db_errors"
+      ],
+      "title": "Alert on database volume usage and size it with headroom",
+      "effort": "low",
+      "impact": "high",
+      "verify": "re-run postgres_disk_full: the alert fires before writes fail"
+    },
+    {
+      "id": "idempotency_keys",
+      "by_agent2": 0,
+      "best_rank": 99,
+      "why": null,
+      "addresses": [
+        "phantom_success"
+      ],
+      "title": "Make order inserts idempotent on request_id",
+      "effort": "low",
+      "impact": "high",
+      "verify": "SELECT request_id, count(*) FROM orders GROUP BY 1 HAVING count(*) > 1  # 0 rows"
+    },
+    {
+      "id": "stalled_job_tuning",
+      "by_agent2": 0,
+      "best_rank": 99,
+      "why": null,
+      "addresses": [
+        "latency_degradation"
+      ],
+      "title": "Tune lock duration / stalled interval for faster job recovery",
+      "effort": "low",
+      "impact": "medium",
+      "verify": "time to last in-flight resolved drops in E1"
+    }
+  ],
+  "experiments": [
+    {
+      "run_id": "r1011-044913",
+      "exp_id": "exp-01",
+      "fault": "worker_pod_kill",
+      "target": "n8n-worker",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 97.9,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 100.0,
+            "why": "310/310 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 99.2,
+            "why": "SLIs back to baseline 32 s after injection, no help"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.1 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 88.9,
+            "why": "8/9 in-flight orders completed exactly once; lost silently 1"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "n8n-worker",
+        "fault": "worker_pod_kill",
+        "root_cause_correct": true,
+        "verdict": "CORRECT",
+        "first_component_named": "n8n-worker",
+        "fault_nature_named": true
+      },
+      "expected_seen": [],
+      "expected_missing": [
+        "consumers_down",
+        "latency_degradation"
+      ],
+      "unexpected": []
+    },
+    {
+      "run_id": "r1011-044913",
+      "exp_id": "exp-02",
+      "fault": "worker_pod_kill",
+      "target": "n8n-worker",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 97.7,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 100.0,
+            "why": "307/307 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 99.2,
+            "why": "SLIs back to baseline 32 s after injection, no help"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.6 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 87.5,
+            "why": "7/8 in-flight orders completed exactly once; lost silently 1"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "n8n-worker",
+        "fault": "worker_pod_kill",
+        "root_cause_correct": true,
+        "verdict": "CORRECT",
+        "first_component_named": "n8n-worker",
+        "fault_nature_named": true
+      },
+      "expected_seen": [],
+      "expected_missing": [
+        "consumers_down",
+        "latency_degradation"
+      ],
+      "unexpected": []
+    },
+    {
+      "run_id": "r1011-044913",
+      "exp_id": "exp-03",
+      "fault": "worker_pod_kill",
+      "target": "n8n-worker",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 97.8,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 100.0,
+            "why": "305/305 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 99.5,
+            "why": "SLIs back to baseline 32 s after injection, no help"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.1 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 87.5,
+            "why": "7/8 in-flight orders completed exactly once; lost silently 1"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "n8n-worker",
+        "fault": "worker_pod_kill",
+        "root_cause_correct": true,
+        "verdict": "CORRECT",
+        "first_component_named": "n8n-worker",
+        "fault_nature_named": true
+      },
+      "expected_seen": [],
+      "expected_missing": [
+        "consumers_down",
+        "latency_degradation"
+      ],
+      "unexpected": []
+    },
+    {
+      "run_id": "r1011-050622",
+      "exp_id": "exp-01",
+      "fault": "worker_pod_failure",
+      "target": "n8n-worker",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 100.0,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 100.0,
+            "why": "305/305 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 99.9,
+            "why": "SLIs back to baseline 30 s after injection, no help"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.1 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 100.0,
+            "why": "9/9 in-flight orders completed exactly once"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "n8n-worker",
+        "fault": "worker_pod_failure",
+        "root_cause_correct": true,
+        "verdict": "CORRECT",
+        "first_component_named": "n8n-worker",
+        "fault_nature_named": true
+      },
+      "expected_seen": [],
+      "expected_missing": [
+        "latency_degradation"
+      ],
+      "unexpected": []
+    },
+    {
+      "run_id": "r1011-050940",
+      "exp_id": "exp-01",
+      "fault": "mockapi_http_500",
+      "target": "mock-api",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 64.9,
+        "band": "fragile",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 66.6,
+            "why": "259/389 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 93.8,
+            "why": "SLIs back to baseline 49 s after injection, no help"
+          },
+          "latency": {
+            "score": 0,
+            "why": "peak p95 23.7 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 100.0,
+            "why": "8/8 in-flight orders completed exactly once"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "mock-api",
+        "fault": "mockapi_http_500",
+        "root_cause_correct": true,
+        "verdict": "CORRECT",
+        "first_component_named": "mock-api",
+        "fault_nature_named": true
+      },
+      "expected_seen": [
+        "silent_async_failure",
+        "sync_errors"
+      ],
+      "expected_missing": [],
+      "unexpected": [
+        "latency_degradation",
+        "queue_backlog"
+      ]
+    },
+    {
+      "run_id": "r1011-051312",
+      "exp_id": "exp-01",
+      "fault": "mockapi_latency",
+      "target": "mock-api",
+      "status": "aborted",
+      "score": {
+        "scored": true,
+        "total": 84.0,
+        "band": "degraded but recovered",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 85.4,
+            "why": "35/41 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 60,
+            "why": "pods recovered without help, SLIs not back to baseline within the window"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.1 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 100.0,
+            "why": "8/8 in-flight orders completed exactly once"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "mock-api",
+        "fault": "mockapi_latency",
+        "root_cause_correct": false,
+        "verdict": "MISSED",
+        "first_component_named": "postgres",
+        "fault_nature_named": false
+      },
+      "expected_seen": [],
+      "expected_missing": [
+        "latency_degradation"
+      ],
+      "unexpected": [
+        "backlog_not_drained",
+        "db_errors"
+      ]
+    },
+    {
+      "run_id": "r1011-051604",
+      "exp_id": "exp-01",
+      "fault": "postgres_overload",
+      "target": "postgres",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 97.5,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 100.0,
+            "why": "434/434 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 91.0,
+            "why": "SLIs back to baseline 57 s after injection, no help"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.6 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 100.0,
+            "why": "8/8 in-flight orders completed exactly once"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "postgres",
+        "fault": "postgres_overload",
+        "root_cause_correct": false,
+        "verdict": "MISSED",
+        "first_component_named": "redis",
+        "fault_nature_named": false
+      },
+      "expected_seen": [],
+      "expected_missing": [
+        "latency_degradation"
+      ],
+      "unexpected": []
+    },
+    {
+      "run_id": "r1011-051950",
+      "exp_id": "exp-01",
+      "fault": "traffic_spike",
+      "target": "n8n-main",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 95.4,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 100.0,
+            "why": "1144/1144 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 83.6,
+            "why": "SLIs back to baseline 79 s after injection, no help"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.7 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 100.0,
+            "why": "9/9 in-flight orders completed exactly once"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "n8n-main",
+        "fault": "traffic_spike",
+        "root_cause_correct": false,
+        "verdict": "MISSED",
+        "first_component_named": "mock-api",
+        "fault_nature_named": false
+      },
+      "expected_seen": [
+        "queue_backlog"
+      ],
+      "expected_missing": [
+        "latency_degradation"
+      ],
+      "unexpected": []
+    },
+    {
+      "run_id": "r1011-052352",
+      "exp_id": "exp-01",
+      "fault": "worker_redis_partition",
+      "target": "n8n-worker",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 100.0,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 100.0,
+            "why": "250/250 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 100.0,
+            "why": "SLIs back to baseline 20 s after injection, no help"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.3 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 100.0,
+            "why": "8/8 in-flight orders completed exactly once"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "n8n-worker",
+        "fault": "worker_redis_partition",
+        "root_cause_correct": false,
+        "verdict": "MISSED",
+        "first_component_named": "redis",
+        "fault_nature_named": false
+      },
+      "expected_seen": [],
+      "expected_missing": [
+        "latency_degradation"
+      ],
+      "unexpected": []
+    },
+    {
+      "run_id": "r1011-052657",
+      "exp_id": "exp-01",
+      "fault": "redis_pod_kill",
+      "target": "redis",
+      "status": "aborted",
+      "score": {
+        "scored": true,
+        "total": 40.2,
+        "band": "failing",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 39.5,
+            "why": "49/124 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 60,
+            "why": "pods recovered without help, SLIs not back to baseline within the window"
+          },
+          "latency": {
+            "score": 0,
+            "why": "peak p95 24.0 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 62.5,
+            "why": "5/8 in-flight orders completed exactly once; phantom success 3"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "redis",
+        "fault": "redis_pod_kill",
+        "root_cause_correct": true,
+        "verdict": "CORRECT",
+        "first_component_named": "redis",
+        "fault_nature_named": true
+      },
+      "expected_seen": [
+        "latency_degradation"
+      ],
+      "expected_missing": [
+        "queue_unreachable"
+      ],
+      "unexpected": [
+        "ingress_down",
+        "phantom_success",
+        "sync_errors"
+      ]
+    },
+    {
+      "run_id": "r1011-052955",
+      "exp_id": "exp-01",
+      "fault": "main_pod_kill",
+      "target": "n8n-main",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 93.9,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 83.9,
+            "why": "235/280 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 100.0,
+            "why": "SLIs back to baseline 26 s after injection, no help"
+          },
+          "latency": {
+            "score": 96.6,
+            "why": "peak p95 6.6 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 100.0,
+            "why": "8/8 in-flight orders completed exactly once"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "n8n-main",
+        "fault": "main_pod_kill",
+        "root_cause_correct": true,
+        "verdict": "CORRECT",
+        "first_component_named": "n8n-main",
+        "fault_nature_named": true
+      },
+      "expected_seen": [
+        "ingress_down",
+        "sync_errors"
+      ],
+      "expected_missing": [],
+      "unexpected": []
+    },
+    {
+      "run_id": "r1011-053323",
+      "exp_id": "exp-01",
+      "fault": "postgres_pod_kill",
+      "target": "postgres",
+      "status": "aborted",
+      "score": {
+        "scored": true,
+        "total": 35.5,
+        "band": "failing",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 37.9,
+            "why": "11/29 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 60,
+            "why": "pods recovered without help, SLIs not back to baseline within the window"
+          },
+          "latency": {
+            "score": 0,
+            "why": "peak p95 24.1 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 37.5,
+            "why": "3/8 in-flight orders completed exactly once; lost silently 1, phantom success 1, lost visible 2, success without row 1"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "postgres",
+        "fault": "postgres_pod_kill",
+        "root_cause_correct": true,
+        "verdict": "CORRECT",
+        "first_component_named": "postgres",
+        "fault_nature_named": true
+      },
+      "expected_seen": [
+        "db_errors",
+        "sync_errors"
+      ],
+      "expected_missing": [],
+      "unexpected": [
+        "backlog_not_drained",
+        "ingress_down",
+        "latency_degradation"
+      ]
+    },
+    {
+      "run_id": "r1011-053831",
+      "exp_id": "exp-01",
+      "fault": "postgres_disk_full",
+      "target": "postgres",
+      "status": "completed",
+      "score": {
+        "scored": true,
+        "total": 98.6,
+        "band": "resilient",
+        "coverage": 0.9,
+        "components": {
+          "availability": {
+            "score": 100.0,
+            "why": "425/425 W1 responses successful across post-injection samples"
+          },
+          "self_recovery": {
+            "score": 94.8,
+            "why": "SLIs back to baseline 56 s after injection, no help"
+          },
+          "latency": {
+            "score": 100,
+            "why": "peak p95 4.1 s vs baseline 4.1 s, abort limit 20 s"
+          },
+          "data_integrity": {
+            "score": 100.0,
+            "why": "8/8 in-flight orders completed exactly once"
+          },
+          "detectability": {
+            "score": null,
+            "why": "no consumer/queue outage, so health-check visibility was not tested"
+          }
+        },
+        "weights": {
+          "availability": 0.3,
+          "self_recovery": 0.25,
+          "latency": 0.2,
+          "data_integrity": 0.15,
+          "detectability": 0.1
+        }
+      },
+      "grade": {
+        "actual_target": "postgres",
+        "fault": "postgres_disk_full",
+        "root_cause_correct": false,
+        "verdict": "MISSED",
+        "first_component_named": "redis",
+        "fault_nature_named": false
+      },
+      "expected_seen": [],
+      "expected_missing": [
+        "db_errors"
+      ],
+      "unexpected": []
+    }
+  ]
+}

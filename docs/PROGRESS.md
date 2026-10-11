@@ -255,3 +255,82 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   from another session's smoke test had leaked in; originals backed up outside the repo) and re-diagnosed: both blind
   diagnoses now come from the LLM (Mistral `ministral-14b-latest`, live API) and grade CORRECT. The page passes the
   bundle to `grade()` so NO_IMPACT runs are labelled as such. The E1 after-recovery screenshots predate this refresh.
+
+
+## End-to-end acceptance test, run 1: E1/E2 only (2026-10-11, branch e2e-results)
+- Run per `docs/E2E_TEST_PROMPT.md` on a Linux host (Arch, 16 cores, 14 GiB RAM, Docker 29.9, kind 0.33, Helm 4.3),
+  cluster deleted and rebuilt from scratch (cluster-up 7 min 9 s, up 1 min 11 s, bootstrap 64 s). Results with every
+  number: `docs/E2E_RESULTS.md` (**37 PASS, 5 FAIL, 1 GAP**); reports and screenshots in `docs/results/`.
+- Baseline (2 workers, 2 req/s): W1 105/105, p50 4.05 s, p95 4.06 s; W2 p95 24 ms; queue 0.
+- Safety: context refusal, namespace protection, kill switch 9/9 (one cli row showed 10.4 s, a test-harness measurement
+  artifact: the CR was deleted in 0.66 s), auto-stop (`queue_waiting 4 > 3`, r1011-024619; E2 tripped p95 by itself),
+  watchdog never needed manual action, no LOCKED.
+- E1 r1011-025233 (2 workers): completed, queue 0, SLIs 70.0 s, 8/8 completed once. E2 r1011-025735 (`--no-llm`):
+  auto-stopped on p95 23.4 s; Redis back in 1.0 s but n8n-main 1× and workers 2× restarted; 3 phantom successes.
+  Agent 2 (Mistral) correct on both. AI report: overall 55/100, Redis kill 35, worker kill 88.
+- Failures: scripted auto-stop demo (`--queue-abort 20`) never trips on this host; E1 symptoms with 2 workers do not
+  match the knowledge file; `run --exp E2` with the LLM silently runs nothing (Agent 1 is not told the requested
+  fault); the AI report had 7 factual errors. Gap: no E3/E4 in the catalog yet.
+
+## End-to-end acceptance test, run 2: 11-fault catalog (2026-10-11, branch e2e-results)
+- Cluster rebuilt from scratch on the Linux host (cluster-up 7 min 50 s). `chaosctl up` failed on Linux:
+  `scripts/pg_small_disk.sh` needs `/dev/loopN` inside the Kind node, which exists on Docker Desktop but not on a Linux
+  host; worked around with `mknod` in the node. Results with every number: `docs/E2E_RESULTS.md` (**39 PASS, 4 FAIL**).
+- Safety: kill switch 9/9 (CR removed ≤ 1.6 s in every row), `demo --queue-abort 20` auto-stopped on its own
+  (mockapi_http_500, `queue_waiting 21 > 20` at 19.8 s), watchdog never needed manual action.
+- 7 weaker faults disabled for the demo (user request); 11 remain over all 6 failure types. `chaosctl run
+  --max-experiments N` added (with `--exp`, Agent 1 planned worker_pod_kill 3 times; 15 min for one fault).
+- All 11 faults run end to end (04:49-05:42). Agent 2 (live Mistral) 5/7 correct on runs with impact (missed
+  mockapi_latency, traffic_spike). AI report (needed `CHAOSCTL_LLM_BUDGET=90`; 30 gives the deterministic draft):
+  overall 83.4; Postgres kill 31.2, Redis kill 37.2, HTTP 500 65.1, latency 75.6, the rest 93-100.
+- New findings: HTTPChaos on mock-api also makes its readiness probe time out (mock-api leaves the Service, so
+  "+2 s latency" fails 100 % of W1); every worker kill lost exactly 1 W2 order silently (3/3); a Postgres restart told
+  one W1 client "OK" for an order that was never saved.
+
+## Dashboard redesign: story, live ops, compare, report (UI.md brief, 2026-10-11, branch dashboard-story)
+- Plan and design decisions: docs/UI_PLAN.md. Files: chaosctl/dash/{runs.py, static/js/*}, fix_summary.py, the
+  `fix-summary` command and the step at the end of `diagnose`, tests/test_dash_runs.py. Agents, runner, safety,
+  catalog, policy and playbook untouched.
+- Finished runs replay in the browser from reports/ + loadgen.sqlite (scrubber, 1x/4x/10x); no cluster needed.
+  Verified on r1011-021151 (E2), r1010-155845 (auto-stop) and Compare r1010-155337 vs r1010-163348.
+  Screenshots: docs/screenshots/ (1920x1080, 1366x768, 1280x720, light theme, presentation mode, mid-replay).
+- Deviations: charts are our own SVG, not a vendored uPlot/Chart.js (vendoring needs a download; offline already
+  works). The interface now uses readable text labels and numbered investigation steps without emoji.
+- Peak p95 now comes from the client-side records (loadgen), not the safety trace, which stops at an abort:
+  r1010-155845 peaks at 26.0 s (5.5x), r1010-155337 at 29.8 s (6.3x, as in README 4.2).
+- LLM settings check: the dashboard prints which MISTRAL_* settings it sees at start. This process sees
+  MISTRAL_MODEL=ministral-14b-latest, so Agent 1's "MISTRAL_MODEL not set" in r1011-* came from runs started before
+  .env had the model, not from a code path.
+- Open: no findings.json exists yet, so the Report tab and Act 5 show the `chaosctl report --all` empty state;
+  combined-failure stretch goal is Planned (no run with two faults). Live ops not re-checked against a live cluster
+  from this laptop (cluster work happens on the other machine).
+
+## Agents in the dashboard: Agent 1 button with approval, Agent 2 always on (2026-10-11, branch e2e-results)
+- New: chaosctl/dash/control.py (plan / approve / kill / traffic), chaosctl/dash/watcher.py (always-on Agent 2),
+  chaosctl/agents/investigator.py (blind tool-using investigation), hidden `chaosctl execute` (runs one approved plan),
+  campaign `preplanned` path, js/agents.js, tests/test_agents_live.py. The page's only writes are these POSTs.
+- Agent 1 self-correction: a plan that fails validation is sent back to Mistral once with the errors; if it is still
+  wrong, only the invalid experiments are dropped. Seen live: Mistral cited `edge:n8n-main->mock-api` (not on the map),
+  which used to discard the whole LLM plan; after the retry the card showed Mistral's pick.
+- Verified live on the Linux host (dashboard on :8788): Agent 1 picked mockapi_http_500 (Mistral), approved in the UI,
+  run r1011-062027 completed (recovery 53.8 s, 8/8 in-flight orders completed once). Agent 2 was not told: it
+  triggered itself 3 s after mock-api went unhealthy (inc-1011-062133), made 6 tool calls, concluded "mock-api
+  unreachable" with http_retry_backoff / autoscale_workers / worker_health_probe; graded CORRECT. The evidence
+  diagnosis it then ran on its own (Mistral) also graded CORRECT and the Story filled in. Kill switch and reset from
+  the UI checked (no chaos to delete; all Ready in 0.06 s).
+
+## Agent 2 faster, charts readable (2026-10-11)
+- Live investigation (`agents/investigator.py`): the 4 "look around" tools every investigation started with (pods,
+  client SLIs, queue, events) plus the Postgres silent-loss check now run as a **parallel triage with no LLM call**
+  (0.01 s instead of ~20 s of LLM turns); Mistral then gets at most 3 targeted follow-ups; tool choice and the written
+  diagnosis run on `ministral-8b-latest` (2-3× faster than 14b on our prompts; the graded evidence diagnosis after a
+  run keeps `MISTRAL_MODEL`; `CHAOSCTL_AGENT2_STEP_MODEL` / `CHAOSCTL_AGENT2_CONCLUDE_MODEL` override).
+- Same live mockapi_http_500 incident, old vs new code side by side: **47.9 s → 25.9 s**, both root causes correct
+  (new one names the readiness-probe failures). Healthy system on an operator check: **35-50 s → 0.01 s**, and it no
+  longer invents an incident (old and 8b/14b LLMs named a "transient worker failure" with 0 detectors firing): a
+  rule-based "no incident" answer when every triage check is normal. That shortcut is never used when the monitor saw a
+  service Down/Degraded (a live test caught it answering "healthy" while mock-api's probe failed but its pod was Ready).
+- Charts: redraw at their real width (they were drawn at a 600 px fallback while hidden, so half the card was empty);
+  event labels in their own lane above the plot instead of over the data; W1 errors as a filled area; a one-line
+  takeaway under each chart title (slowest orders and × baseline, failed orders and how long W1 completed nothing
+  before an auto-stop, possible silent failure, backlog peak and drain time).

@@ -173,10 +173,13 @@ def test_alert_banner_groups_and_labels():
 # ------------------------------------------------------------------ API responses (replay of a recorded run)
 
 @pytest.fixture
-def replay_hub(monkeypatch):
+def replay_hub(monkeypatch, tmp_path):
     monkeypatch.setattr(sources, "REPORTS", FIX / "runs")
     monkeypatch.setattr(hub_mod, "REPORTS", FIX / "runs")
     monkeypatch.setattr(sources, "LOADGEN_DB", FIX / "runs" / "missing.sqlite")
+    graph_file = tmp_path / "graph.json"
+    graph_file.write_text(json.dumps(fixture_graph()))
+    monkeypatch.setattr(hub_mod, "GRAPH_JSON", graph_file)
     src = sources.ReplaySources("r1010-214152")
     h = hub_mod.Hub(src)
     return src, h
@@ -234,13 +237,26 @@ def test_api_after_recovery_matches_evidence(replay_hub, monkeypatch):
 
 # ------------------------------------------------------------------ static page
 
-def test_page_has_no_fabricated_data_or_glyphs():
+def test_page_is_offline_writes_only_through_agent_controls_and_invents_nothing():
+    """No generated numbers, nothing loaded from another host. Besides the advisory chat, the only writes are the
+    agent controls in agents.js (Agent 1 plan/approve, kill switch, traffic, Agent 2), all sent with the
+    X-Chaosctl header; no endpoint injects or applies anything directly. Controls have readable text labels."""
     static = ROOT / "chaosctl" / "dash" / "static"
-    js = (static / "app.js").read_text()
-    assert "Math.random" not in js
-    emoji = re.compile("[\U0001F300-\U0001FAFF☀-➿⬀-⯿←-⇿✓✔✖✗✘]")
-    for f in static.iterdir():
-        assert not emoji.search(f.read_text()), f.name
+    files = [f for f in static.rglob("*") if f.is_file()]
+    text = {f.name: f.read_text() for f in files}
+    for name, t in text.items():
+        assert "Math.random" not in t, name
+        assert not re.search(r"(src|href)=[\"']https?://", t), f"{name} loads from another host"
+        assert not re.search(r"import .* from [\"']https?://", t), name
+    js = "".join(t for n, t in text.items() if n.endswith(".js") and n != "agents.js")
+    assert re.findall(r'method: "(\w+)"', js) == ["POST"] and '"/api/chat"' in js
+    assert not re.search(r"/api/(inject|kill|apply|delete|agent1|agent2|traffic|run/\S+/(start|stop))", js)
+    ag = text["agents.js"]
+    assert re.findall(r'method: "(\w+)"', ag) == ["POST"] and '"X-Chaosctl": "1"' in ag
+    assert set(re.findall(r'"(/api/[\w/]+)"', ag)) == {"/api/agent1/plan", "/api/agent1/approve", "/api/agent1/cancel",
+                                                       "/api/kill", "/api/kill/reset", "/api/traffic",
+                                                       "/api/agent2/investigate", "/api/agent2/pause"}
+    assert not re.search(r"/api/(inject|apply|delete)", ag)
 
 
 # ------------------------------------------------------------------ resilience panel (moved from test_kb_report.py)

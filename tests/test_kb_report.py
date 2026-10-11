@@ -266,13 +266,13 @@ def test_ai_report_is_written_by_the_model(tmp_path):
     call = fake_model([_exp_json()], [_summary_json()])
     md, data = report.build(report.load_run(rdir), call=call)
     assert data["source"] == "llm"
-    assert call.seen == ["ScoreJudgement"] * reporter.SAMPLES + ["ExperimentReport", "FindingsSummary"]
-    ai = data["experiments"][0]["ai_score"]
-    assert ai["total"] == round(0.30 * 80 + 0.25 * 85 + 0.20 * 0 + 0.15 * 25 + 0.10 * 0, 1)  # the AI's judgement
-    assert data["overall"]["score"] == ai["total"] and data["ranking"]["experiments"][0]["score"] == ai["total"]
-    assert data["experiments"][0]["reference_score"]["total"] == score.score_experiment(
-        e1_bundle(), json.loads((rdir / "results.json").read_text())[0])["total"]        # formula kept as reference
-    assert "Written and scored by Agent 2" in md and "Killing the worker lost 11 orders visibly." in md
+    assert call.seen == ["ExperimentReport", "FindingsSummary"]
+    expected = score.score_experiment(e1_bundle(), json.loads((rdir / "results.json").read_text())[0])
+    assert data["score_method"] == "formula" and data["experiments"][0]["score"] == expected
+    assert data["overall"]["score"] == expected["total"]
+    assert data["ranking"]["experiments"][0]["score"] == expected["total"]
+    assert "scores calculated from the resilience formula" in md
+    assert "Killing the worker lost 11 orders visibly." in md
     assert "Deterministic draft" not in md and data["unverified_numbers"] == {}
 
 
@@ -300,7 +300,7 @@ def test_invalid_ai_output_is_retried_with_feedback(tmp_path):
 
 def test_ai_output_still_invalid_after_retry_falls_back(tmp_path):
     rdir = make_run(tmp_path)
-    call = fake_model([_exp_json()], [_summary_json()], [_score_json(scores=[])])
+    call = fake_model([_exp_json(evidence=["made_up_id"])], [_summary_json()])
     md, data = report.build(report.load_run(rdir), call=call)
     assert data["source"].startswith("fallback:AI writer unavailable") and "Deterministic draft" in md
 
@@ -371,36 +371,25 @@ def test_both_report_paths_include_ranking(tmp_path):
 
 # ------------------------------------------------------------ AI score: median of samples, calibration memory
 
-def test_ai_score_is_median_of_independent_judgements(tmp_path):
-    rdir = make_run(tmp_path)
-    samples = [_score_json((90, 90, 10, 30, 0)), _score_json((70, 60, 30, 20, 0)), _score_json((80, 85, 20, 25, 0))]
-    md, data = report.build(report.load_run(rdir), call=fake_model([_exp_json()], [_summary_json()], samples))
-    comps = {k: c["score"] for k, c in data["experiments"][0]["ai_score"]["components"].items()}
-    assert comps == {"availability": 80, "self_recovery": 85, "latency": 20, "data_integrity": 25, "detectability": 0}
-    assert data["experiments"][0]["ai_score"]["spread"] > 0 and "median of 3 judgements" in md
+def test_legacy_score_utility_uses_median_of_independent_judgements():
+    samples = [reporter.ScoreJudgement.model_validate_json(_score_json(v)) for v in
+               ((90, 90, 10, 30, 0), (70, 60, 30, 20, 0), (80, 85, 20, 25, 0))]
+    judged = reporter.median_judgement(samples)
+    assert {k: c["score"] for k, c in judged["components"].items()} == {
+        "availability": 80, "self_recovery": 85, "latency": 20, "data_integrity": 25, "detectability": 0}
+    assert judged["spread"] > 0
 
 
-def test_scores_are_remembered_and_used_for_calibration(tmp_path, monkeypatch):
+def test_ai_and_fallback_reports_use_identical_formula_scores_without_score_memory(tmp_path):
     from chaosctl import score_memory
-    make_run(tmp_path, run_id="r1010-100000")
-    report.build(report.load_run(tmp_path / "reports" / "r1010-100000"), call=fake_model([_exp_json(
-        ref="r1010-100000/exp-01")], [_summary_json(weaknesses=[])], [_score_json(ref="r1010-100000/exp-01")]))
-    mem = score_memory.load()
-    assert [m["exp_ref"] for m in mem] == ["r1010-100000/exp-01"] and mem[0]["ai_total"] is not None
-    prompts = []
-    orig = llm.generate_json
-
-    def spy(purpose, prompt, *a, **k):
-        prompts.append((purpose, prompt))
-        return orig(purpose, prompt, *a, **k)
-    monkeypatch.setattr(reporter.llm, "generate_json", spy)
-    make_run(tmp_path, run_id="r1010-110000")
-    md, data = report.build(report.load_run(tmp_path / "reports" / "r1010-110000"), call=fake_model(
-        [_exp_json(ref="r1010-110000/exp-01")], [_summary_json(weaknesses=[])], [_score_json(ref="r1010-110000/exp-01")]))
-    score_prompt = next(p for purpose, p in prompts if purpose == "report_score")
-    assert "r1010-100000/exp-01" in score_prompt                              # earlier judgement shown as calibration
-    assert data["calibrated_on"] == ["r1010-100000/exp-01"] and "calibrated on 1 earlier" in md
-    assert len(score_memory.load()) == 2
+    exps = report.load_run(make_run(tmp_path))
+    call = fake_model([_exp_json()], [_summary_json()], [_score_json((0, 0, 0, 0, 0))])
+    md, ai = report.build(exps, call=call)
+    _, draft = report.build(exps, use_llm=False)
+    assert ai["overall"] == draft["overall"] and ai["ranking"] == draft["ranking"]
+    assert ai["experiments"][0]["score"] == draft["experiments"][0]["score"]
+    assert "ScoreJudgement" not in call.seen and score_memory.load() == []
+    assert "0.30*A + 0.25*S + 0.20*L + 0.15*D + 0.10*M" in md
 
 
 def test_deterministic_draft_does_not_touch_score_memory(tmp_path):
