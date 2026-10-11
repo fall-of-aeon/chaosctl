@@ -271,3 +271,18 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
 - Failures: scripted auto-stop demo (`--queue-abort 20`) never trips on this host; E1 symptoms with 2 workers do not
   match the knowledge file; `run --exp E2` with the LLM silently runs nothing (Agent 1 is not told the requested
   fault); the AI report had 7 factual errors. Gap: no E3/E4 in the catalog yet.
+
+## End-to-end acceptance test, run 2: 11-fault catalog (2026-10-11, branch e2e-results)
+- Cluster rebuilt from scratch on the Linux host (cluster-up 7 min 50 s). `chaosctl up` failed on Linux:
+  `scripts/pg_small_disk.sh` needs `/dev/loopN` inside the Kind node, which exists on Docker Desktop but not on a Linux
+  host; worked around with `mknod` in the node. Results with every number: `docs/E2E_RESULTS.md` (**39 PASS, 4 FAIL**).
+- Safety: kill switch 9/9 (CR removed ≤ 1.6 s in every row), `demo --queue-abort 20` auto-stopped on its own
+  (mockapi_http_500, `queue_waiting 21 > 20` at 19.8 s), watchdog never needed manual action.
+- 7 weaker faults disabled for the demo (user request); 11 remain over all 6 failure types. `chaosctl run
+  --max-experiments N` added (with `--exp`, Agent 1 planned worker_pod_kill 3 times; 15 min for one fault).
+- All 11 faults run end to end (04:49-05:42). Agent 2 (live Mistral) 5/7 correct on runs with impact (missed
+  mockapi_latency, traffic_spike). AI report (needed `CHAOSCTL_LLM_BUDGET=90`; 30 gives the deterministic draft):
+  overall 83.4; Postgres kill 31.2, Redis kill 37.2, HTTP 500 65.1, latency 75.6, the rest 93-100.
+- New findings: HTTPChaos on mock-api also makes its readiness probe time out (mock-api leaves the Service, so
+  "+2 s latency" fails 100 % of W1); every worker kill lost exactly 1 W2 order silently (3/3); a Postgres restart told
+  one W1 client "OK" for an order that was never saved.

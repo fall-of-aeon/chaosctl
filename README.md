@@ -250,6 +250,8 @@ image (load and disk ballast), and our own **load generator** (traffic spike).
 | *(off)* | `worker_clock_skew` | TimeChaos | n8n-worker | disabled: flaky ptrace into Node.js (3.5) | - |
 | *(test)* | `pod_failure` | PodChaos pod-failure | worker | kill-switch test only | - |
 
+**Trimmed for the demo (11 Oct):** `worker_graceful_kill`, `worker_container_kill`, `mockapi_container_kill`, `mockapi_http_abort`, `redis_latency`, `postgres_latency` and `packet_loss` are now `enabled: false` (weaker duplicates or no measurable impact in the E2E runs); 11 faults stay enabled and still cover all 6 failure types. Set `enabled: true` to bring one back.
+
 **Full disk without risking the laptop.** The postgres volume is a hostPath on the Kind node, i.e. on the laptop's disk
 (~1 TB free), so filling it directly is not an option, and Chaos Mesh's IOChaos (fake `ENOSPC`) does not work on this
 Kind setup. `scripts/pg_small_disk.sh` (run by `up.sh`) puts postgres's data on a 512 MiB loop-mounted ext4 file inside
@@ -364,7 +366,7 @@ uv run chaosctl graph                   # dependency map table; also writes grap
 uv run chaosctl plan --dry-run          # Agent 1's plan with reasons and guard verdicts. Never injects.
 uv run chaosctl demo                    # judge demo: Agent 1 picks ONE experiment, runs it once, Agent 2 diagnoses
 uv run chaosctl demo --queue-abort 20   # same, with a strict queue limit to show the automatic stop
-uv run chaosctl run --exp E1            # E1 = worker pod kill
+uv run chaosctl run --exp E1            # E1 = worker pod kill (add --max-experiments 1: Agent 1 may plan repeats)
 uv run chaosctl run --exp E2            # E2 = Redis pod kill (only allowed after a passed E1)
 uv run chaosctl run --exp redis_latency # any catalog fault id (2.6); repeatable
 uv run python scripts/chaos_smoke.py    # live check of every fault driver, no load (~4 min)
@@ -482,20 +484,23 @@ reports/ (gitignored)      one folder per run: journal, results, evidence, diagn
 | r1010-214152 | **`chaosctl demo --queue-abort 20`**: Agent 1 picked **E1** | 2 workers: **no visible symptom** (no auto-stop needed), replacement Ready and SLIs back in **33.2 s**; of 8 in-flight orders, 7 completed once, **1 async order lost silently** | ✅ correct, fix: graceful shutdown |
 
 ### Final end-to-end test (11 Oct 2026, Linux host, cluster rebuilt from scratch)
-Full results, every number and every failure: `docs/E2E_RESULTS.md` (37 PASS, 5 FAIL, 1 GAP). Reports and
-screenshots: `docs/results/`. Host: Arch Linux, 16 cores, 14 GiB RAM, 2 workers, Mistral for every AI step.
-Baseline: W1 105/105, p95 **4.06 s**, queue 0.
+Two full runs of `docs/E2E_TEST_PROMPT.md`. **Run 2 (current, 11 enabled faults): 39 PASS, 4 FAIL, 0 GAP**; every
+number, failure and next action: `docs/E2E_RESULTS.md`; reports and screenshots: `docs/results/` (run 1 with E1/E2
+only: `docs/results/run1/`). Host: Arch Linux, 16 cores, 14 GiB RAM, 2 workers, live Mistral for Agent 1, Agent 2
+and the report. Baseline: W1 105/105, p95 **4.06 s**, queue 0.
 
-| Run | Experiment | What happened | Agent 2 (blind) |
-|---|---|---|---|
-| r1011-025233 | **E1** worker kill, 2 workers | **Completed.** Queue stayed at 0, W1 p95 max 4.6 s (1.1×). Replacement Ready 31.5 s, SLIs back 70.0 s. 8/8 in-flight completed once. 2 W1 errors at ~61 s ("job stalled more than maxStalledCount") | ✅ correct (Mistral); one wrong claim ("single worker") |
-| r1011-025735 | **E2** Redis kill (`--no-llm`, see failure 3 in E2E_RESULTS) | Redis back in **1.0 s**, but n8n-main restarted 1×, workers 2×, W2 errored too; **auto-stopped** at 38.9 s (p95 23.4 s > 20 s). 5 completed once, **3 phantom successes** | ✅ correct (Mistral); fixes: Redis persistence, async status, 2 workers |
-| r1011-024619 | E1, 1 worker, `--queue-abort 3` | **Auto-stopped** `queue_waiting 4 > 3` 3.6 s after injection; chaos removed 0.6 s later; watchdog OK, no manual action | - |
-| r1011-024059 | E1, 1 worker, `--queue-abort 20` | Not stopped: queue peaked at 6 on this host (Mac: ~52). 7 completed once, **1 W2 lost silently**, 1 lost visibly | - |
+AI findings report over the 11 runs: overall **83.4 / 100 (degraded but recovered)**. Least resilient first:
 
-AI findings report over these runs: overall **55 / 100 (fragile)**; Redis kill **35** (failing) below worker kill
-**88** (resilient). The report text had 7 factual errors against the evidence (see E2E_RESULTS T7.4); review it
-before showing it.
+| Rank | Fault | Run | Score | What happened |
+|---|---|---|---|---|
+| 1 | E11 Postgres pod kill | r1011-053323 | **31.2** failing | auto-stopped; of 8 in-flight orders 1 lost silently, 2 lost with error, 1 phantom success, 1 "success without row" |
+| 2 | E2 Redis pod kill | r1011-052657 | **37.2** failing | 1 s Redis restart → n8n-main 1×, workers 2× restarted, W2 errors, 3 phantom successes; auto-stopped |
+| 3 | E5 Mock API HTTP 500 | r1011-050940 | 65.1 fragile | W1 failures, back in 48.7 s |
+| 4 | E4 Mock API latency +2 s | r1011-051312 | 75.6 | auto-stopped, 100 % W1 errors (fault proxy also breaks mock-api's health probe) |
+| 5-13 | n8n-main kill, traffic spike, Postgres overload, worker kill ×3, disk full, hung worker, worker-Redis partition | | 93-100 | absorbed or recovered in 20-79 s; **every worker kill lost 1 async order silently** |
+
+The 7 weakest/duplicate faults were disabled for the demo (`enabled: false` in `catalog.yaml`, see 2.6). The AI
+report's prose has 8 factual errors against the evidence (E2E_RESULTS T7.4): review it before showing it.
 
 ## 4.3 Findings (weaknesses found)
 1. **One worker has no headroom.** After a worker kill the backlog never drains under normal load.
@@ -521,7 +526,7 @@ before showing it.
 - Run history in `state/history.json`: E1 passed twice, E2 tested once. Both experiments are now "tested", so the
   scorer ranks the worker kill first. The guard still orders tier 1 before tier 3. **To make Agent 1's choice interesting
   again, enable more faults (Part 5).**
-- After the 11 Oct end-to-end test (Linux host): `state/history.json` was rebuilt there from scratch: E1 passed 4×,
+- After the 11 Oct end-to-end tests (Linux host): see `docs/E2E_RESULTS.md`. Run 1 history: E1 passed 4×,
   aborted 1× (test limit), E2 aborted 1×. Open issues before the demo: `docs/E2E_RESULTS.md` → "Is the system demo-ready?".
 - **LLM is now Mistral** (`ministral-14b-latest`, fallback `ministral-8b-latest`). Gemini was dropped after its quota
   ran out. If Mistral is unreachable, everything still works through the deterministic fallbacks. See the gotcha in 3.5.

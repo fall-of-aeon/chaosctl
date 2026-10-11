@@ -211,7 +211,9 @@ def run(exp: list[str] = typer.Option(None, help="fault alias (E1, E2, ... see `
         auto: bool = typer.Option(False, help="run the whole planned campaign"),
         approve: bool = typer.Option(False, help="ask before each injection"),
         llm: bool = typer.Option(True, "--llm/--no-llm"),
-        queue_abort: int = typer.Option(None, help="override queue_waiting abort threshold (stricter only)")):
+        queue_abort: int = typer.Option(None, help="override queue_waiting abort threshold (stricter only)"),
+        max_experiments: int = typer.Option(None, "--max-experiments", min=1,
+                                            help="run at most N planned experiments (e.g. 1: one experiment per fault)")):
     """Run experiments through the campaign graph under the safety controller."""
     from chaosctl.agents.campaign import build_campaign
     from chaosctl.runner import Runner, load_policy
@@ -234,7 +236,8 @@ def run(exp: list[str] = typer.Option(None, help="fault alias (E1, E2, ... see `
     camp = build_campaign(runner, _live_graph, policy, runner.journal, approve_fn=approve_fn)
     console.print(f"run id {runner.run_id}; journal {runner.dir / 'journal.jsonl'}")
     try:
-        state = camp.invoke({"only": only, "use_llm": llm}, {"recursion_limit": 100})
+        state = camp.invoke({"only": only, "use_llm": llm, "max_experiments": max_experiments},
+                            {"recursion_limit": 100})
     finally:
         runner.loadgen.stop()
         runner.ctl.stop()
