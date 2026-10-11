@@ -394,11 +394,19 @@ uv run python scripts/chaos_smoke.py    # live check of every fault driver, no l
 uv run chaosctl --require-llm demo      # fail instead of falling back if Mistral cannot be used
 uv run chaosctl diagnose                # Agent 2 on the newest run (or: --run r1010-163829)
 uv run chaosctl report                  # AI-written findings report + score (newest run; --run ID, --all)
+uv run chaosctl eval --exclude-tests    # recorded agent scoreboard -> reports/eval.md and eval.json
 uv run chaosctl kb                      # fault knowledge base: E1/E2/... and consistency check
 uv run chaosctl kill                    # KILL SWITCH (or: touch KILL, or Ctrl-C in the run)
 uv run chaosctl recover --ack           # clean up after a crash; clears LOCKED
 uv run chaosctl killswitch-test         # kill switch acceptance test, 3× each way (about 10 min)
 ```
+
+`chaosctl eval` prints a Markdown scoreboard and writes `reports/eval.md` and `reports/eval.json` using
+recorded data only. Filter with repeated or comma-separated `--runs ID`, `--since` (ISO date/time or epoch
+seconds), and `--exclude-tests` (kill-switch runs and limits tighter than policy defaults). Use `--out-dir`
+to keep comparison outputs. `--since` filters journal timestamps and incident starts; diagnoses and fix
+summaries, which lack timestamps, count only for runs starting after the cutoff. Chat fallback counts are
+shown with an unavailable rate because successful chat answers are not recorded.
 
 **One experiment takes about 5-6 minutes**: 60 s warm-up, ~3 min observation, up to 3 min to resolve in-flight requests.
 

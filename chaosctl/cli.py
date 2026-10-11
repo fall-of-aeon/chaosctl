@@ -537,6 +537,28 @@ def report(run: list[str] = typer.Option(None, help="run id(s); default: newest 
     console.print(f"written: {out} and {out.with_suffix('.json')}")
 
 
+@app.command("eval")
+def eval_cmd(runs: list[str] = typer.Option(None, "--runs", help="run id(s), repeat or comma-separate; default: all"),
+             since: str = typer.Option(None, help="only data recorded at/after this ISO date-time or epoch seconds"),
+             exclude_tests: bool = typer.Option(False, "--exclude-tests",
+                                                help="skip ks-* kill-switch runs and runs with test (tightened) limits"),
+             out_dir: Path = typer.Option(None, help="where eval.md / eval.json go (default: reports/)")):
+    """Agent scoreboard from recorded runs only (no LLM calls): diagnosis accuracy, plan validity, fallback rates,
+    fact-check pass rate, LLM calls/latency, live investigation time. Writes reports/eval.md and eval.json."""
+    from chaosctl import scoreboard
+
+    reports = ROOT / "reports"
+    try:
+        scoreboard.parse_since(since)
+    except ValueError:
+        raise typer.BadParameter("expected an ISO date-time or epoch seconds", param_hint="--since") from None
+    data = scoreboard.evaluate(reports, ROOT / "state", runs=scoreboard.split_runs(runs), since=since,
+                               exclude_tests=exclude_tests)
+    md, js = scoreboard.write(data, out_dir or reports)
+    print(md.read_text())
+    console.print(f"written: {md} and {js}")
+
+
 @app.command()
 def kb():
     """Fault knowledge base: what each catalog fault means, and consistency problems."""

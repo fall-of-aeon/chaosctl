@@ -173,10 +173,13 @@ def test_alert_banner_groups_and_labels():
 # ------------------------------------------------------------------ API responses (replay of a recorded run)
 
 @pytest.fixture
-def replay_hub(monkeypatch):
+def replay_hub(monkeypatch, tmp_path):
     monkeypatch.setattr(sources, "REPORTS", FIX / "runs")
     monkeypatch.setattr(hub_mod, "REPORTS", FIX / "runs")
     monkeypatch.setattr(sources, "LOADGEN_DB", FIX / "runs" / "missing.sqlite")
+    graph_file = tmp_path / "graph.json"
+    graph_file.write_text(json.dumps(fixture_graph()))
+    monkeypatch.setattr(hub_mod, "GRAPH_JSON", graph_file)
     src = sources.ReplaySources("r1010-214152")
     h = hub_mod.Hub(src)
     return src, h
