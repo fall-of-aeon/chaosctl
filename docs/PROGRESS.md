@@ -318,3 +318,19 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
   unreachable" with http_retry_backoff / autoscale_workers / worker_health_probe; graded CORRECT. The evidence
   diagnosis it then ran on its own (Mistral) also graded CORRECT and the Story filled in. Kill switch and reset from
   the UI checked (no chaos to delete; all Ready in 0.06 s).
+
+## Agent 2 faster, charts readable (2026-10-11)
+- Live investigation (`agents/investigator.py`): the 4 "look around" tools every investigation started with (pods,
+  client SLIs, queue, events) plus the Postgres silent-loss check now run as a **parallel triage with no LLM call**
+  (0.01 s instead of ~20 s of LLM turns); Mistral then gets at most 3 targeted follow-ups; tool choice and the written
+  diagnosis run on `ministral-8b-latest` (2-3× faster than 14b on our prompts; the graded evidence diagnosis after a
+  run keeps `MISTRAL_MODEL`; `CHAOSCTL_AGENT2_STEP_MODEL` / `CHAOSCTL_AGENT2_CONCLUDE_MODEL` override).
+- Same live mockapi_http_500 incident, old vs new code side by side: **47.9 s → 25.9 s**, both root causes correct
+  (new one names the readiness-probe failures). Healthy system on an operator check: **35-50 s → 0.01 s**, and it no
+  longer invents an incident (old and 8b/14b LLMs named a "transient worker failure" with 0 detectors firing): a
+  rule-based "no incident" answer when every triage check is normal. That shortcut is never used when the monitor saw a
+  service Down/Degraded (a live test caught it answering "healthy" while mock-api's probe failed but its pod was Ready).
+- Charts: redraw at their real width (they were drawn at a 600 px fallback while hidden, so half the card was empty);
+  event labels in their own lane above the plot instead of over the data; W1 errors as a filled area; a one-line
+  takeaway under each chart title (slowest orders and × baseline, failed orders and how long W1 completed nothing
+  before an auto-stop, possible silent failure, backlog peak and drain time).

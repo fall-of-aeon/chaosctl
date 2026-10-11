@@ -76,21 +76,40 @@ GOOD_DIAG = {"thoughts": [{"step": "observe", "text": "0 active, 40 waiting"}, {
 
 # ------------------------------------------------------------------ Agent 2 investigation
 
-def test_investigation_uses_tools_then_concludes_blind():
-    call, seen = scripted_llm([step("pod_status", "observe"), step("queue_stats", "hypothesize"),
-                               step("service_logs", service="n8n-worker"), step("conclude", "conclude")], GOOD_DIAG)
+TRIAGE = ["pod_status", "client_slis", "queue_stats", "recent_events", "database_check"]
+
+
+def test_investigation_triage_then_targeted_tools_then_concludes_blind():
+    call, seen = scripted_llm([step("service_logs", service="n8n-worker"), step("conclude", "conclude")], GOOD_DIAG)
     updates = []
     out = inv.investigate("- n8n-worker is Down: no Ready pod", toolkit(logs=["error: lost connection", "chaos-daemon injected"]),
                           llm_call=call, on_step=lambda u: updates.append(len(u["steps"])))
-    assert [s["action"] for s in out["steps"]] == ["pod_status", "queue_stats", "service_logs"]
+    assert [s["action"] for s in out["steps"]] == TRIAGE + ["service_logs"]
+    assert [s["by"] for s in out["steps"]] == ["triage"] * 5 + ["llm"]
+    assert len(seen["step"]) == 2                         # the triage costs no LLM turn
     assert out["llm_used"] and out["source"].startswith("llm:api")
     assert out["diagnosis"]["root_cause"].startswith("The n8n-worker")
-    assert updates[:3] == [1, 2, 3]                       # streamed after every step
-    logs = out["steps"][2]["result"]["lines"]
+    assert updates[:2] == [5, 6]                          # triage streamed at once, then every follow-up
+    logs = out["steps"][5]["result"]["lines"]
     assert logs == ["error: lost connection"]             # the injector's own lines never reach the agent
-    # the transcript of earlier tool results is fed back into the next step's prompt
-    assert "tool:1" in seen["step"][1] and "n8n-worker-x" in seen["step"][1]
+    # the triage results are fed into the first step's prompt
+    assert "tool:1" in seen["step"][0] and "n8n-worker-x" in seen["step"][0]
     assert "consumers_down" in seen["conclude"][0]        # detectors run on the live points
+
+
+def test_triage_tools_run_in_parallel():
+    tk = toolkit()
+    slow = {}
+    for name in ("pods", "redis", "events", "points"):
+        f = tk.g[name]
+        slow[name] = (lambda f: (lambda *a: (time.sleep(0.3), f(*a))[1]))(f)
+    tk.g.update(slow)
+    call, _ = scripted_llm([step("conclude", "conclude")], GOOD_DIAG)
+    t0 = time.time()
+    out = inv.investigate("- n8n-worker is Down", tk, llm_call=call)
+    assert [s["action"] for s in out["steps"]] == TRIAGE
+    assert out["steps"][0]["took_s"] < 0.9                 # 5 tools x 0.3 s sequentially would be >= 1.5 s
+    assert time.time() - t0 < 2.5
 
 
 def test_conclusion_must_cite_its_own_tool_calls_and_the_playbook():
@@ -101,17 +120,19 @@ def test_conclusion_must_cite_its_own_tool_calls_and_the_playbook():
     assert all(f["playbook_id"] in inv.dg.PLAYBOOK for f in out["diagnosis"]["fixes"])
 
 
-def test_repeated_call_is_replaced_and_steps_are_bounded():
-    call, _ = scripted_llm([step("pod_status", "observe")] * 20, GOOD_DIAG)
-    out = inv.investigate("- n8n-worker is Down", toolkit(), llm_call=call, max_steps=4)
+def test_repeated_call_is_replaced_and_followups_are_bounded():
+    call, seen = scripted_llm([step("pod_status", "observe")] * 20, GOOD_DIAG)
+    out = inv.investigate("- n8n-worker is Down", toolkit(), llm_call=call, max_steps=2)
     acts = [s["action"] for s in out["steps"]]
-    assert len(acts) == 4 and len(set(acts)) == 4 and acts[0] == "pod_status"
+    assert acts[:5] == TRIAGE and len(acts) == 6 and len(set(acts)) == 6   # pod_status was already in the triage
+    assert len(seen["step"]) == 2
 
 
-def test_conclude_first_is_not_allowed():
-    call, _ = scripted_llm([step("conclude", "conclude"), step("conclude", "conclude")], GOOD_DIAG)
+def test_conclude_right_after_triage_is_allowed():
+    call, seen = scripted_llm([step("conclude", "conclude")], GOOD_DIAG)
     out = inv.investigate("- redis is Down", toolkit(), llm_call=call)
-    assert [s["action"] for s in out["steps"]] == ["pod_status"]
+    assert [s["action"] for s in out["steps"]] == TRIAGE
+    assert len(seen["step"]) == 1 and len(seen["conclude"]) == 1
 
 
 def test_llm_down_falls_back_to_fixed_sequence_and_says_so():
@@ -120,8 +141,9 @@ def test_llm_down_falls_back_to_fixed_sequence_and_says_so():
     def call(*a):
         raise TimeoutError()
     out = inv.investigate("- n8n-worker is Down", toolkit(), llm_call=call)
-    assert [s["action"] for s in out["steps"]] == [a for a, _ in inv.DEFAULT_SEQUENCE]
-    assert all(s["by"] == "rule" for s in out["steps"])
+    rest = [a for a, _ in inv.DEFAULT_SEQUENCE if a not in TRIAGE]
+    assert [s["action"] for s in out["steps"]] == TRIAGE + rest
+    assert [s["by"] for s in out["steps"]] == ["triage"] * 5 + ["rule"] * len(rest)
     assert not out["llm_used"]
     assert "consumers_down" in {h["id"] for h in out["detectors"]}
     assert any(a["component"] == "Agent 2 (live investigation)" for a in alerts.seen())
@@ -317,3 +339,54 @@ def test_campaign_runs_exactly_the_approved_plan(monkeypatch):
                        "preplanned": {"item": item, "verdict": verdict, "source": "llm:api:m", "proposal_id": "p1"}})
     assert ran == [("worker_pod_kill", "node:n8n-worker", "approve")]
     assert out["plan_source"] == "llm:api:m" and out["results"][0]["status"] == "completed"
+
+
+def test_live_investigation_uses_the_fast_model_and_can_be_switched_back(monkeypatch):
+    models = {"Step": [], "Diagnosis": []}
+
+    def call(model, prompt, schema):
+        models[schema["title"]].append(model)
+        return json.dumps(step("conclude", "conclude") if schema["title"] == "Step" else GOOD_DIAG)
+    inv.investigate("- n8n-worker is Down", toolkit(), llm_call=call)
+    assert models == {"Step": [inv.STEP_MODEL_DEFAULT], "Diagnosis": [inv.CONCLUDE_MODEL_DEFAULT]}
+    monkeypatch.setenv("CHAOSCTL_AGENT2_CONCLUDE_MODEL", "")      # back to MISTRAL_MODEL ("m" in these tests)
+    models = {"Step": [], "Diagnosis": []}
+    inv.investigate("- n8n-worker is Degraded", toolkit(), llm_call=call)    # new prompt: not answered from the cache
+    assert models == {"Step": [inv.STEP_MODEL_DEFAULT], "Diagnosis": ["m"]}
+
+
+
+def healthy_toolkit():
+    tk = toolkit(pts=points())
+    tk.g["pods"] = lambda: {"n8n-worker": [{"name": "w", "phase": "Running", "ready": True, "restarts": 0, "created": NOW - 900}],
+                            "redis": [{"name": "redis-0", "phase": "Running", "ready": True, "restarts": 0, "created": NOW - 900}]}
+    tk.g["redis"] = lambda: {"reachable": True, "wait": 0, "active": 2, "dbsize": 40}
+    return tk
+
+
+def test_healthy_system_is_reported_at_once_without_an_llm():
+    def call(*a):
+        raise AssertionError("no LLM call expected for a healthy system")
+    out = inv.investigate("- no service is Down or Degraded right now; an operator asked for a health check",
+                          healthy_toolkit(), llm_call=call)
+    assert out.get("healthy") and not out["llm_used"] and out["source"].startswith("rule:healthy")
+    assert [s["action"] for s in out["steps"]] == TRIAGE
+    assert out["diagnosis"]["fixes"] == [] and out["diagnosis"]["root_cause"].startswith("No incident found")
+
+
+def test_one_unready_pod_or_a_silent_loss_is_not_healthy():
+    tk = healthy_toolkit()
+    tk.g["postgres"] = lambda: {"reachable": True, "recon_gap": 1, "recon_checked": 50}
+    call, seen = scripted_llm([step("conclude", "conclude")], GOOD_DIAG)
+    out = inv.investigate("- operator check", tk, llm_call=call)
+    assert not out.get("healthy") and len(seen["conclude"]) == 1
+    assert out["source"].startswith(("llm", "fallback"))
+
+
+
+def test_a_down_service_in_the_trigger_always_gets_the_full_investigation():
+    # live incident 2026-10-11: the monitor saw mock-api Down (its probe failed) while every triage check was normal
+    call, seen = scripted_llm([step("downstream_check", service="mock-api"), step("conclude", "conclude")], GOOD_DIAG)
+    out = inv.investigate("- mock-api is Down: mock-api admin probe unreachable", healthy_toolkit(), llm_call=call)
+    assert not out.get("healthy") and len(seen["step"]) == 2 and len(seen["conclude"]) == 1
+    assert [s["action"] for s in out["steps"]] == TRIAGE + ["downstream_check"]

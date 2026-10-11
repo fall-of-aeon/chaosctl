@@ -95,7 +95,7 @@ export function impactCharts(host, prefix, data, s, x, cursor, extra = {}) {
   const tp = {id: prefix + "-tp", title: "Throughput and errors: did work stop? were customers still told OK?", unit: "requests / s", x, fmt: (v) => fix1(v),
     series: [{key: "w1", name: "W1 completed / s", color: "var(--text)", t: data.t, v: cut("w1_ok")},
              {key: "w2", name: "W2 accepted / s", color: "var(--ok)", t: data.t, v: cut("w2_ok")},
-             {key: "err", name: "W1 errors / s", color: "var(--fault)", type: "bars", t: data.t, v: cut("w1_err")}, ...(extra.tp || [])],
+             {key: "err", name: "W1 errors / s", color: "var(--fault)", type: "area", t: data.t, v: cut("w1_err")}, ...(extra.tp || [])],
     bands, markers, gaps: gaps.filter((g) => !g.series), empty, yMaxMin: 2, now: extra.now, wallT0: data.wall_t0,
     callouts: silent != null ? [{t: silent, text: "Silent failure: async customers still told OK"}] : []};
   const q = {id: prefix + "-q", title: "Redis queue: did a backlog build up, and did it drain?", unit: "jobs", x, fmt: (v) => String(Math.round(v)),
@@ -103,9 +103,53 @@ export function impactCharts(host, prefix, data, s, x, cursor, extra = {}) {
              {key: "active", name: "jobs active", color: "var(--text)", t: data.t, v: cut("q_active")}, ...(extra.q || [])],
     refs: lim.queue_waiting ? [{y: lim.queue_waiting, kind: "limit", label: `abort: ${lim.queue_waiting} jobs`, from: 0}] : [],
     bands, markers, gaps, empty, yMaxMin: 10, now: extra.now, wallT0: data.wall_t0};
+  Object.assign(lat, {summary: latSummary(data, cursor, b, peak && s.peak_p95, rec)});
+  const stopT = (s && s.markers.find((m) => m.key === "abort")?.rel_s) ?? null;   // the safety controller stops the load
+  Object.assign(tp, {summary: tpSummary(data, cursor, stopT)});
+  Object.assign(q, {summary: qSummary(data, cursor, lim)});
   chart($(prefix + "-lat"), lat);
   chart($(prefix + "-tp"), tp);
   chart($(prefix + "-q"), q);
+}
+
+// ---- one-line takeaways above each chart, computed from the same series (after injection, up to the cursor)
+const after = (d, cursor) => d.t.map((t, i) => [t, i]).filter(([t]) => t >= 0 && (cursor == null || t <= cursor));
+const b_ = (x) => `<b>${x}</b>`;
+
+function latSummary(d, cursor, base, pk, rec) {
+  if (!after(d, cursor).length) return "";
+  const bs = base.w1_p95_ms ? base.w1_p95_ms / 1000 : null;
+  if (!pk) return bs ? `Latency stayed near the ${bs.toFixed(1)} s baseline.` : "";
+  const ratio = pk.ratio ? ` (${pk.ratio}× the ${bs ? bs.toFixed(1) + " s " : ""}baseline)` : "";
+  const back = rec != null && (cursor == null || cursor >= rec) ? ` Back to normal at ${b_("T+" + Math.round(rec) + " s")}.` : " Not back to normal in this window.";
+  return `Slowest orders took ${b_((pk.ms / 1000).toFixed(1) + " s")}${ratio} at T+${Math.round(pk.rel_s)} s.${pk.ratio && pk.ratio < 1.5 ? " Customers barely noticed." : back}`;
+}
+
+function tpSummary(d, cursor, stopT) {
+  const pts = after(d, cursor).filter(([t]) => stopT == null || t <= stopT);   // after an auto-stop no orders are sent
+  if (!pts.length) return "";
+  let errs = 0, errSecs = 0, stall = 0, w2while = 0;
+  for (const [, i] of pts) {
+    const e = (d.w1_err || [])[i] || 0, ok = (d.w1_ok || [])[i], w2 = (d.w2_ok || [])[i];
+    errs += e; if (e > 0) errSecs++;
+    if (ok === 0) { stall++; if (w2 > 0) w2while++; }
+  }
+  const parts = [];
+  parts.push(errSecs ? `About ${b_(Math.round(errs))} W1 orders failed, spread over ${errSecs} s.` : "No W1 order failed.");
+  if (stall) parts.push(`W1 completed nothing for ${b_(stall + " s")}${stopT != null ? ` before the auto-stop at T+${Math.round(stopT)} s` : ""}.`);
+  if (w2while >= 5) parts.push(`W2 customers were still told ${b_("OK")} during ${w2while} s of that: possible silent failure.`);
+  return parts.join(" ");
+}
+
+function qSummary(d, cursor, lim) {
+  const pts = after(d, cursor);
+  if (!pts.length) return "";
+  let mx = 0, tmx = null, drained = null;
+  for (const [t, i] of pts) { const w = (d.q_wait || [])[i]; if (w != null && w > mx) { mx = w; tmx = t; } }
+  if (!mx) return "The queue never backed up (0 jobs waiting).";
+  for (const [t, i] of pts) if (t > tmx && ((d.q_wait || [])[i] ?? 1) === 0) { drained = t; break; }
+  const limit = lim.queue_waiting ? ` (abort limit ${lim.queue_waiting})` : "";
+  return `Backlog peaked at ${b_(Math.round(mx) + " jobs")}${limit} at T+${Math.round(tmx)} s; ${drained != null ? `drained by ${b_("T+" + Math.round(drained) + " s")}` : "not drained in this window"}.`;
 }
 
 /** first second of a 5 s stretch where W2 is still accepted while W1 completes nothing */

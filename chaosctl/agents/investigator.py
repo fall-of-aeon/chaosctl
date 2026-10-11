@@ -3,8 +3,10 @@
 The dashboard's watcher calls investigate() when a service turns Down or Degraded. It never sees the chaos plan, the
 run journal or Chaos Mesh objects; every tool result is filtered the same way as the evidence bundle (diagnosis.blind).
 
-Loop (bounded, at most MAX_STEPS tool calls):
-    Mistral picks the next tool and says why (observe / hypothesize / check)
+Loop (bounded):
+    triage: the broad "look around" tools every investigation starts with (pods, client SLIs, queue, events) run at
+            once, in parallel, with no LLM call (they were the same first 4 picks every time and cost ~20 s of LLM turns)
+ -> at most MAX_FOLLOWUPS targeted steps: Mistral picks the next tool and says why (observe / hypothesize / check)
  -> the tool runs (read-only: Kubernetes, Redis, Postgres, the load generator's records, the dependency map)
  -> its result is added to the transcript
  ... until Mistral answers "conclude"
@@ -16,7 +18,10 @@ Nothing here changes the system.
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, Field
@@ -24,8 +29,21 @@ from pydantic import BaseModel, Field
 from chaosctl import alerts, llm
 from chaosctl.agents import diagnosis as dg
 
-MAX_STEPS = 6
-RESULT_CHARS = 1400            # per tool result in the prompt
+MAX_FOLLOWUPS = 3              # LLM-chosen tool calls after the triage snapshot
+# The live investigation is the quick first answer while an incident is on screen, so it runs on a smaller, faster
+# model: picking the next tool ~2 s instead of ~4 s, the written diagnosis ~10 s instead of 14-29 s (ministral-8b vs
+# 14b, measured 2026-10-11). The graded evidence diagnosis after the run (diagnosis.diagnose) keeps MISTRAL_MODEL.
+# CHAOSCTL_AGENT2_STEP_MODEL / CHAOSCTL_AGENT2_CONCLUDE_MODEL override; set one to "" to use MISTRAL_MODEL.
+STEP_MODEL_DEFAULT = "ministral-8b-latest"
+CONCLUDE_MODEL_DEFAULT = "ministral-8b-latest"
+MAX_STEPS = MAX_FOLLOWUPS      # kept for callers that pass max_steps (= LLM follow-ups)
+RESULT_CHARS = 1100            # per tool result in the conclude prompt
+STEP_RESULT_CHARS = 700        # per tool result in each step prompt (smaller prompt = faster answer)
+TRIAGE = [("pod_status", "none", "Which pods are Ready, restarting or gone?"),
+          ("client_slis", "none", "What did clients see compared with the baseline?"),
+          ("queue_stats", "none", "Is the job queue reachable, backing up or draining?"),
+          ("recent_events", "none", "Which Kubernetes warnings happened recently?"),
+          ("database_check", "none", "Is Postgres reachable, and were accepted W2 orders silently lost?")]
 SERVICES = ("n8n-main", "n8n-worker", "redis", "postgres", "mock-api")
 
 TOOLS: dict[str, str] = {
@@ -188,9 +206,9 @@ class ToolKit:
 
 # ------------------------------------------------------------ prompts
 
-def _short(obj: Any) -> str:
+def _short(obj: Any, limit: int = RESULT_CHARS) -> str:
     s = json.dumps(obj, default=str)
-    return s if len(s) <= RESULT_CHARS else s[:RESULT_CHARS] + "...(truncated)"
+    return s if len(s) <= limit else s[:limit] + "...(truncated)"
 
 
 def _system() -> str:
@@ -204,7 +222,7 @@ def _system() -> str:
 def step_prompt(trigger: str, transcript: list[dict], steps_left: int) -> str:
     tools = "\n".join(f"- {k}: {v}" for k, v in TOOLS.items())
     done = "\n".join(f"[tool:{s['n']}] {s['kind']}: {s['thought']}\n  -> {s['action']}(service={s['service']}, since_s={s['since_s']}) "
-                     f"= {_short(s['result'])}" for s in transcript) or "(none yet)"
+                     f"= {_short(s['result'], STEP_RESULT_CHARS)}" for s in transcript) or "(none yet)"
     return f"""{_system()}
 
 WHAT THE MONITOR SAW (why you were called):
@@ -216,9 +234,11 @@ TOOLS (service = one of {list(SERVICES)} or "none"):
 INVESTIGATION SO FAR:
 {done}
 
-Choose the single next step. Start broad (observe), then form a hypothesis and check it with the most telling tool;
-do not repeat a call you already made with the same arguments. You have {steps_left} tool call(s) left. When the
-evidence is enough to name the component that failed first and how it failed, answer with action "conclude"."""
+The first calls are a triage snapshot (pods, client SLIs, queue, events). Form a hypothesis from it and check it
+with the single most telling tool (logs of the suspect service, downstream_check, database_check, dependencies,
+run_detectors); do not repeat a call you already made with the same arguments. You have {steps_left} follow-up
+call(s) left. As soon as the evidence names the component that failed first and how it failed, answer with action
+"conclude" (concluding right after the triage is fine when it already shows the cause)."""
 
 
 def conclude_prompt(trigger: str, transcript: list[dict], hits: list[dict]) -> str:
@@ -254,6 +274,47 @@ def allowed_evidence(transcript: list[dict], hits: list[dict]) -> set[str]:
 
 # ------------------------------------------------------------ the loop
 
+TRIGGER_BAD = re.compile(r"\b(n8n-main|n8n-worker|redis|postgres|mock-api) is (Down|Degraded)\b")
+
+
+def healthy_snapshot(steps: list[dict], hits: list[dict], trigger: str = "") -> list[str] | None:
+    """If the triage shows nothing wrong, the reasons why (no LLM needed, and an LLM asked to find a cause in a healthy
+    system tends to invent one). None as soon as anything is off: then the full investigation runs.
+    Never used when the monitor saw a service Down or Degraded: the triage cannot see everything the monitor saw (e.g.
+    mock-api's own probe failing while Kubernetes still reports the pod Ready, live incident 2026-10-11)."""
+    if TRIGGER_BAD.search(trigger or ""):
+        return None
+    r = {s["action"]: s["result"] for s in steps}
+    pods, q, db, sli = r.get("pod_status") or {}, r.get("queue_stats") or {}, r.get("database_check") or {}, r.get("client_slis") or {}
+    if hits or any("error" in (x or {}) for x in (pods, q, db, sli)):
+        return None
+    allpods = [p for ps in pods.values() for p in ps]
+    if not allpods or not all(p.get("ready") for p in allpods):
+        return None
+    base = q.get("baseline_waiting_max") or 0
+    if (q.get("now") or {}).get("reachable") is False or q.get("seconds_unreachable") or (q.get("waiting_max") or 0) > max(5, 2 * base):
+        return None
+    if db.get("reachable") is False or (db.get("w2_accepted_30s_to_5min_ago_without_row") or 0) > 0:
+        return None
+    if sli.get("load_on") is not False and ((sli.get("w1_errors_per_s") or {}).get("max") or 0) > 0:
+        return None
+    why = [f"All {len(allpods)} pods are Ready (tool:1).",
+           f"Queue reachable, at most {q.get('waiting_max') or 0} jobs waiting (tool:3).",
+           f"Postgres reachable, {db.get('w2_accepted_30s_to_5min_ago_without_row') or 0} accepted W2 orders without a row (tool:5).",
+           "No detector fired."]
+    why.append("No client traffic in the window, so customer SLIs could not be measured (tool:2)." if sli.get("load_on") is False
+               else f"Clients: W1 p95 up to {((sli.get('w1_p95_ms') or {}).get('max'))} ms, no W1 errors (tool:2).")
+    return why
+
+
+def _step_model() -> str | None:
+    return os.environ.get("CHAOSCTL_AGENT2_STEP_MODEL", STEP_MODEL_DEFAULT) or None
+
+
+def _conclude_model() -> str | None:
+    return os.environ.get("CHAOSCTL_AGENT2_CONCLUDE_MODEL", CONCLUDE_MODEL_DEFAULT) or None
+
+
 def investigate(trigger: str, tools: ToolKit, journal=None, use_llm: bool = True, llm_call=None,
                 on_step: Callable[[dict], None] | None = None, max_steps: int = MAX_STEPS) -> dict:
     """Returns {"steps", "diagnosis", "source", "llm_used"}; on_step(record) is called after every step so the UI can
@@ -274,13 +335,43 @@ def investigate(trigger: str, tools: ToolKit, journal=None, use_llm: bool = True
             journal.write({"event": "agent2_tool", "n": rec["n"], "action": action, "service": service, "by": by})
         emit({"phase": "step", "steps": steps})
 
+    # triage snapshot: independent read-only tools, run in parallel, no LLM turn
+    t_tri = time.time()
+    with ThreadPoolExecutor(max_workers=len(TRIAGE)) as pool:
+        results = list(pool.map(lambda t: tools.run(t[0], t[1], 180), TRIAGE))
+    for (action, service, thought), result in zip(TRIAGE, results):
+        steps.append({"n": len(steps) + 1, "kind": "observe", "thought": f"Triage: {thought}", "action": action,
+                      "service": service, "since_s": 180, "result": result, "by": "triage", "ts": t_tri,
+                      "took_s": round(time.time() - t_tri, 2)})
+        seen.add((action, service))
+    if journal:
+        journal.write({"event": "agent2_triage", "tools": [a for a, _, _ in TRIAGE], "took_s": round(time.time() - t_tri, 2)})
+    emit({"phase": "step", "steps": steps})
+    n_triage = len(steps)
+
+    hits0 = dg.detect(tools.mini_bundle(300))
+    why_ok = healthy_snapshot(steps, hits0, trigger)
+    if why_ok is not None:   # nothing is wrong: say so at once instead of asking an LLM to find a cause
+        d = dg.Diagnosis(thoughts=[dg.Thought(step="observe", text=w) for w in why_ok] +
+                         [dg.Thought(step="conclude", text="No incident: every check in the triage is normal.")],
+                         root_cause="No incident found: all services are Ready, the queue and Postgres are healthy, no "
+                                    "order was lost and no detector fired.",
+                         failure_chain=[], findings=[dg.Finding(title="All triage checks normal",
+                                                                evidence=[f"tool:{i}" for i in range(1, n_triage + 1)])],
+                         fixes=[])
+        if journal:
+            journal.write({"event": "agent2_healthy", "reasons": why_ok})
+        emit({"phase": "concluding", "steps": steps})
+        return {"steps": steps, "source": "rule:healthy (triage normal, no LLM needed)", "steps_source": "triage",
+                "llm_used": False, "detectors": [], "diagnosis": d.model_dump(), "healthy": True}
+
     if use_llm:
         llm.budget.allow(max_steps + 3)
         try:
-            while len(steps) < max_steps:
+            while len(steps) - n_triage < max_steps:
                 meta: dict = {}
-                st = llm.generate_json("investigate_step", step_prompt(trigger, steps, max_steps - len(steps)), Step,
-                                       journal=journal, call=llm_call, meta=meta)
+                st = llm.generate_json("investigate_step", step_prompt(trigger, steps, max_steps - (len(steps) - n_triage)), Step,
+                                       journal=journal, call=llm_call, meta=meta, prefer_model=_step_model())
                 source = source or f"llm:{meta.get('source', '?')}:{meta.get('model', '?')}"
                 if st.action == "conclude":
                     if steps:
@@ -303,7 +394,7 @@ def investigate(trigger: str, tools: ToolKit, journal=None, use_llm: bool = True
         alerts.llm_fallback("Agent 2 (live investigation)", f"{why_fallback} -> fixed tool sequence and detector-only "
                             "template diagnosis", journal)
         for a, s in DEFAULT_SEQUENCE:
-            if len(steps) >= max_steps + len(DEFAULT_SEQUENCE) or (a, s) in seen:
+            if (a, s) in seen:
                 continue
             run_tool("observe", f"Fixed sequence (LLM not used): {TOOLS[a].split(':')[0].lower()}.", a, s, 180, "rule")
 
@@ -314,7 +405,8 @@ def investigate(trigger: str, tools: ToolKit, journal=None, use_llm: bool = True
         meta = {}
         try:
             d = llm.generate_json("investigate_conclude", conclude_prompt(trigger, steps, hits), dg.Diagnosis,
-                                  journal=journal, call=llm_call, meta=meta)
+                                  journal=journal, call=llm_call, meta=meta,
+                                  prefer_model=_conclude_model())
             final_src = f"llm:{meta.get('source', '?')}:{meta.get('model', '?')}"
             errs = dg.validate(d, allowed_evidence(steps, hits), quiet=dg.is_quiet(hits))
             if errs:

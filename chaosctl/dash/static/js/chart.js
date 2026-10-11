@@ -27,8 +27,13 @@ export function chart(host, cfg) {
     host.dataset.built = "1";
     host.classList.add("chart-wrap");
     host.innerHTML = `<div class="chart-head"><span class="title"></span><span class="legend" role="group" aria-label="Series"></span></div>
-      <svg class="chart" role="img"></svg>`;
+      <p class="chart-sum" hidden></p><svg class="chart" role="img"></svg>`;
     bind(cfg.id, host.querySelector("svg"));
+    let lastW = 0;   // drawn while hidden the svg is 0 px wide: redraw at the real width (and when panels open/close)
+    new ResizeObserver(() => {
+      const w = host.querySelector("svg").clientWidth;
+      if (w && Math.abs(w - lastW) > 2 && charts.has(cfg.id)) { lastW = w; draw(cfg.id); }
+    }).observe(host);
   }
   draw(cfg.id);
 }
@@ -56,7 +61,23 @@ function bind(id, svg) {
   });
 }
 
-function margins(cfg) { return {l: 64, r: 16, t: cfg.bracket || cfg.bands?.length ? 30 : 14, b: 26}; }
+const LANE = 14;   // px per row of event-marker labels, drawn above the plot so they never cover the data
+function margins(cfg, laneRows = 0) { return {l: 64, r: 16, t: laneRows * LANE + (cfg.bracket || cfg.bands?.length ? 30 : 14), b: 26}; }
+
+/** place marker labels in up to 3 rows above the plot, left to right, without overlaps */
+function laneLayout(markers, X, W, m) {
+  const ends = [], out = [];
+  for (const mk of markers) {
+    const xx = X(mk.t), w = mk.label.length * 6.2 + 10;
+    const right = xx + w > W - m.r;
+    const a = right ? xx - w : xx, z = right ? xx : xx + w;
+    let row = ends.findIndex((e) => a > e + 4);
+    if (row < 0) row = ends.length < 3 ? ends.length : ends.indexOf(Math.min(...ends));
+    ends[row] = Math.max(ends[row] ?? -1e9, z);
+    out.push({mk, xx, row, right});
+  }
+  return {rows: Math.max(0, ...out.map((o) => o.row + 1)), items: out};
+}
 
 function valueAt(s, t) {
   let best = null, bd = 1.6;
@@ -86,9 +107,16 @@ function draw(id) {
     draw(id);
   });
   svg.setAttribute("aria-label", `${cfg.title}, ${cfg.unit}`);
-  const W = svg.clientWidth || 600, H = svg.clientHeight || 200, m = margins(cfg);
+  const sum = host.querySelector(".chart-sum");
+  sum.hidden = !cfg.summary;
+  sum.innerHTML = cfg.summary || "";
+  const W = svg.clientWidth || host.clientWidth || 600, H = svg.clientHeight || 200;
   const [x0, x1] = cfg.x;
-  const X = (t) => m.l + (t - x0) / (x1 - x0 || 1) * (W - m.l - m.r);
+  const mks = (cfg.markers || []).filter((k) => k.t != null && k.t >= x0 && k.t <= x1).sort((a, b) => a.t - b.t);
+  const m0 = margins(cfg);
+  const X = (t) => m0.l + (t - x0) / (x1 - x0 || 1) * (W - m0.l - m0.r);
+  const lane = laneLayout(mks, X, W, m0);
+  const m = margins(cfg, lane.rows);
   const vis = cfg.series.filter((s) => !bus.hidden.has(cfg.id + ":" + s.key));
   let ymax = cfg.yMaxMin || 1;
   let any = false;
@@ -165,16 +193,10 @@ function draw(id) {
     if (c.t < x0 || c.t > x1) continue;
     g += `<text class="callout" x="${Math.min(X(c.t) + 6, W - m.r - 280)}" y="${m.t + 58}">${esc(c.text)}</text>`;
   }
-  // event markers, labels staggered so they never overlap
-  const rows = [-1e9, -1e9, -1e9];
-  for (const mk of (cfg.markers || []).filter((k) => k.t != null && k.t >= x0 && k.t <= x1).sort((a, b) => a.t - b.t)) {
-    const xx = X(mk.t);
-    let row = rows.findIndex((r) => xx - r > 96);
-    if (row < 0) row = 2;
-    rows[row] = xx;
-    const right = xx > W - m.r - 90;
-    g += `<line class="mk${mk.key === "abort" ? " mk-abort" : ""}" x1="${xx}" x2="${xx}" y1="${m.t}" y2="${H - m.b}"/>
-      <text class="mk-label" x="${right ? xx - 4 : xx + 4}" y="${m.t + 12 + row * 13}" text-anchor="${right ? "end" : "start"}">${esc(mk.label)}</text>`;
+  // event markers: line through the plot, label in the lane above it
+  for (const {mk, xx, row, right} of lane.items) {
+    g += `<line class="mk${mk.key === "abort" ? " mk-abort" : ""}" x1="${xx}" x2="${xx}" y1="${row * LANE + 14}" y2="${H - m.b}"/>
+      <text class="mk-label${mk.key === "abort" ? " mk-abort-label" : ""}" x="${right ? xx - 4 : xx + 4}" y="${row * LANE + 11}" text-anchor="${right ? "end" : "start"}">${esc(mk.label)}</text>`;
   }
   if (cfg.now != null && cfg.now >= x0 && cfg.now <= x1) g += `<line class="now" x1="${X(cfg.now)}" x2="${X(cfg.now)}" y1="${m.t}" y2="${H - m.b}"/>`;
   if (bus.brush) {

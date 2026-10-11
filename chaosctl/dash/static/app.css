@@ -387,3 +387,9 @@ html.chat-open main.tab { margin-right: min(460px, 100vw); }
 @media (max-width: 900px) { html.chat-open main.tab { margin-right: 0; } }
 .chat-thread { overflow-x: hidden; }
 .src .chip { white-space: normal; overflow-wrap: anywhere; word-break: break-all; }
+
+/* chart readability: a takeaway line under each chart title; marker labels sit in their own lane above the plot */
+.chart-sum { margin: 2px 0 0; font-size: 0.875rem; color: var(--text); }
+.chart-sum b { font-family: var(--display); font-weight: 700; font-size: 1rem; }
+.chart .mk-label { font-size: 11px; fill: var(--muted); }
+.chart .mk-abort-label { fill: var(--fault); font-weight: 700; }

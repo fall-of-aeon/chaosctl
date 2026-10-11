@@ -133,6 +133,7 @@ def generate_json(
     seed: int = 7,
     temperature: float = 0.1,
     meta: dict | None = None,
+    prefer_model: str | None = None,
 ) -> T:
     """Return a validated model_cls instance or raise LLMUnavailable (its message says why). A different seed
     (with a temperature above ~0.3) is an independent sample. meta, if given, is filled with
@@ -142,6 +143,8 @@ def generate_json(
     prompt = redact(prompt)
     schema = model_cls.model_json_schema()
     models = [m for m in (os.environ.get("MISTRAL_MODEL"), os.environ.get("MISTRAL_FALLBACK_MODEL")) if m]
+    if prefer_model and models:   # e.g. a faster model for a latency-sensitive step; the normal models stay as fallbacks
+        models = [prefer_model] + [m for m in models if m != prefer_model]
     log = journal or (lambda _e: None)
     meta = meta if meta is not None else {}
     errors: list[str] = []

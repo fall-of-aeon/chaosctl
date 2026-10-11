@@ -303,6 +303,10 @@ the URL does the same. **Presentation** (+25 % type, less detail) and **light/da
   root cause, offline grade) → 4 Fix summary (what broke, why, playbook fixes with effort/impact/change, verify,
   rollback) → 5 Resilience report (score, or the `chaosctl report --all` command). Then the stretch goals.
 - **Live ops**: live charts and pod swimlane, service tiles, merged error log.
+- **Agent 2 live investigation**: a parallel triage (pods, client SLIs, queue, events, Postgres silent-loss check) with
+  no LLM call, then at most 3 LLM-chosen follow-up tools and a written diagnosis on the fast `ministral-8b-latest`
+  (~25 s on a live incident; a healthy system is reported at once without an LLM). The graded evidence diagnosis after
+  a run keeps `MISTRAL_MODEL`. Each chart shows a one-line takeaway above it.
 - **💬 Ask Agent 2** (header button, every tab): a side-panel conversation about the run in the run picker. Follow-up
   questions keep context. Retrieval (RAG) puts that run's own records first (result with fate meanings, findings-report
   analysis, diagnosis, Kubernetes events, logs), then BM25 matches from other runs, the playbook and docs; docs are
