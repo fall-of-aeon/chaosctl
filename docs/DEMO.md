@@ -1,5 +1,7 @@
 # Demo: one experiment in 3 minutes (six acts)
 
+For the live agents (Agent 1 button, Agent 2 always on) and the full shooting plan, see `docs/DEMO_DASHBOARD.md`.
+
 Record from the dashboard's **Story** tab. No cluster needed: replay a finished run.
 
 **Before recording:** `uv run chaosctl dashboard --replay r1011-021151` (E2, Redis pod kill), open

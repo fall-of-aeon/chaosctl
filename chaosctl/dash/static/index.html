@@ -29,10 +29,17 @@
     <a role="tab" href="#compare" data-tab="compare">Compare</a>
     <a role="tab" href="#report" data-tab="report">Report</a>
   </nav>
+  <button class="killbtn" id="kill-btn" data-ag="kill" hidden title="Stop any running experiment now: delete all chaos, stop the load, wait for every service to be Ready (same as chaosctl kill)">⛔ Kill switch</button>
   <button class="toggle" id="present" aria-pressed="false" title="Larger type, less detail, wider charts">Presentation</button>
   <button class="toggle" id="theme" title="Light theme reads better on projectors">Light / dark</button>
 </header>
 <div class="alerts" id="alerts" role="alert" hidden></div>
+
+<!-- ============================== AGENTS (live only) ============================== -->
+<section class="agents" id="agents" aria-label="Agents" hidden>
+  <div class="card a1-live" id="agent1-live"></div>
+  <div class="card a2-live" id="agent2-live" aria-live="polite"></div>
+</section>
 
 <!-- ============================== STORY ============================== -->
 <main id="tab-story" class="tab" data-tab="story">

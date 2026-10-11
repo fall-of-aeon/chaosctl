@@ -1,10 +1,11 @@
-// Controller: run picker, live vs replay, scrubber, tabs, header. Read-only: no request here changes anything.
+// Controller: run picker, live vs replay, scrubber, tabs, header. The only writes are the agent controls (agents.js).
 import {$, esc, DASH, nice, fix1, secs, tplus, tsec, clock, getJSON, store, healthPill} from "./util.js";
 import {bus, redrawAll, swimlane} from "./chart.js";
 import {buildMap, updateMap, highlight} from "./map.js";
 import {LogPanel} from "./logs.js";
 import * as story from "./story.js";
 import {renderReportFull, renderCompare} from "./report.js";
+import {setupAgents, updateAgents} from "./agents.js";
 
 const S = {
   runs: [], sel: null, tab: "story", d: {}, cursor: null, playing: false, speed: 1, timer: null,
@@ -148,9 +149,10 @@ function connect() {
 }
 async function pollOnce() {
   try {
-    const [state, comps, mt] = await Promise.all([getJSON("/api/state"), getJSON("/api/components"), getJSON("/api/metrics?window=10")]);
+    const [state, comps, mt, ctl] = await Promise.all([getJSON("/api/state"), getJSON("/api/components"), getJSON("/api/metrics?window=10"),
+      getJSON("/api/control").catch(() => ({}))]);
     S.live.ok = true;
-    onLive({state, components: comps, points: mt.points});
+    onLive({state, components: comps, points: mt.points, control: ctl.control, agent2: ctl.agent2});
   } catch (e) { S.live.ok = false; renderHeader(); }
 }
 async function backfill() {
@@ -187,6 +189,7 @@ async function onLive(p) {
   const ref = x ? `${x.run_id}/${x.id}:${x.active}:${x.phase}` : null;
   if (S.sel === "live" && ref !== lastRunRef) { lastRunRef = ref; await refreshLiveRun(); await loadRuns(); $("run-picker").value = "live"; }
   renderHeader();
+  updateAgents(p, L.state, S.sel === "live" && ["story", "live"].includes(S.tab));
   if (S.tab === "live") renderLiveOps();
   if (S.sel === "live" && S.tab === "story") renderStory();
 }
@@ -396,6 +399,7 @@ function openDrawer({evidence}) {
 
 function renderAll() {
   renderHeader();
+  updateAgents({}, S.live.state, S.sel === "live" && ["story", "live"].includes(S.tab));
   if (S.tab === "story") { S.cardsRef = null; renderStory(); }
   if (S.tab === "live") renderLiveOps();
   if (S.tab === "compare") renderCompare(S.runs, $("cmp-a").value || null, $("cmp-b").value || null);
@@ -410,6 +414,7 @@ setInterval(() => { renderHeader(); if (S.d.live && S.tab === "story" && !S.live
 setInterval(() => { if (S.sel === "live") refreshLiveRun(); }, 5000);
 
 setupChrome();
+setupAgents();
 syncHeaderHeight();
 route();
 backfill().then(connect);

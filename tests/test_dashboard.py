@@ -234,9 +234,10 @@ def test_api_after_recovery_matches_evidence(replay_hub, monkeypatch):
 
 # ------------------------------------------------------------------ static page
 
-def test_page_is_offline_read_only_and_invents_nothing():
-    """No generated numbers, nothing loaded from another host, no request that changes anything
-    (the advisory chat is the only POST). Emoji are allowed since the UI.md brief; each is paired with a word."""
+def test_page_is_offline_writes_only_through_agent_controls_and_invents_nothing():
+    """No generated numbers, nothing loaded from another host. Besides the advisory chat, the only writes are the
+    agent controls in agents.js (Agent 1 plan/approve, kill switch, traffic, Agent 2), all sent with the
+    X-Chaosctl header; no endpoint injects or applies anything directly. Emoji are paired with a word."""
     static = ROOT / "chaosctl" / "dash" / "static"
     files = [f for f in static.rglob("*") if f.is_file()]
     text = {f.name: f.read_text() for f in files}
@@ -244,9 +245,15 @@ def test_page_is_offline_read_only_and_invents_nothing():
         assert "Math.random" not in t, name
         assert not re.search(r"(src|href)=[\"']https?://", t), f"{name} loads from another host"
         assert not re.search(r"import .* from [\"']https?://", t), name
-    js = "".join(t for n, t in text.items() if n.endswith(".js"))
+    js = "".join(t for n, t in text.items() if n.endswith(".js") and n != "agents.js")
     assert re.findall(r'method: "(\w+)"', js) == ["POST"] and '"/api/chat"' in js
-    assert not re.search(r"/api/(inject|kill|apply|delete|run/\S+/(start|stop))", js)
+    assert not re.search(r"/api/(inject|kill|apply|delete|agent1|agent2|traffic|run/\S+/(start|stop))", js)
+    ag = text["agents.js"]
+    assert re.findall(r'method: "(\w+)"', ag) == ["POST"] and '"X-Chaosctl": "1"' in ag
+    assert set(re.findall(r'"(/api/[\w/]+)"', ag)) == {"/api/agent1/plan", "/api/agent1/approve", "/api/agent1/cancel",
+                                                       "/api/kill", "/api/kill/reset", "/api/traffic",
+                                                       "/api/agent2/investigate", "/api/agent2/pause"}
+    assert not re.search(r"/api/(inject|apply|delete)", ag)
 
 
 # ------------------------------------------------------------------ resilience panel (moved from test_kb_report.py)

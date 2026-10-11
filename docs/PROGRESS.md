@@ -304,3 +304,17 @@ Note: Agent 2 sees ordinary Kubernetes events (e.g. pod Killing), like an on-cal
 - Open: no findings.json exists yet, so the Report tab and Act 5 show the `chaosctl report --all` empty state;
   combined-failure stretch goal is Planned (no run with two faults). Live ops not re-checked against a live cluster
   from this laptop (cluster work happens on the other machine).
+
+## Agents in the dashboard: Agent 1 button with approval, Agent 2 always on (2026-10-11, branch e2e-results)
+- New: chaosctl/dash/control.py (plan / approve / kill / traffic), chaosctl/dash/watcher.py (always-on Agent 2),
+  chaosctl/agents/investigator.py (blind tool-using investigation), hidden `chaosctl execute` (runs one approved plan),
+  campaign `preplanned` path, js/agents.js, tests/test_agents_live.py. The page's only writes are these POSTs.
+- Agent 1 self-correction: a plan that fails validation is sent back to Mistral once with the errors; if it is still
+  wrong, only the invalid experiments are dropped. Seen live: Mistral cited `edge:n8n-main->mock-api` (not on the map),
+  which used to discard the whole LLM plan; after the retry the card showed Mistral's pick.
+- Verified live on the Linux host (dashboard on :8788): Agent 1 picked mockapi_http_500 (Mistral), approved in the UI,
+  run r1011-062027 completed (recovery 53.8 s, 8/8 in-flight orders completed once). Agent 2 was not told: it
+  triggered itself 3 s after mock-api went unhealthy (inc-1011-062133), made 6 tool calls, concluded "mock-api
+  unreachable" with http_retry_backoff / autoscale_workers / worker_health_probe; graded CORRECT. The evidence
+  diagnosis it then ran on its own (Mistral) also graded CORRECT and the Story filled in. Kill switch and reset from
+  the UI checked (no chaos to delete; all Ready in 0.06 s).

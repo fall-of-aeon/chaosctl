@@ -270,7 +270,24 @@ cloud and physical-machine chaos.
 
 ## 2.7 The dashboard (`chaosctl dashboard` → http://127.0.0.1:8787)
 
-Read-only and advisory: no button injects, deletes chaos or applies a fix; commands are shown as copyable text.
+**The agents, live** (panel at the top of Story and Live ops, live mode only):
+- **Agent 1, on a button.** *Ask Agent 1 to pick a fault* runs the same injection agent as `chaosctl plan` (score →
+  Mistral → validate, with one self-correction if the plan cites ids that are not on the map → policy guard). The card
+  shows the pick, why (cited graph ids), the prediction, the auto-stop limits, the blast radius and the guard verdict.
+  Nothing is injected until you press **Approve and inject**: the exact approved plan then runs in its own
+  `chaosctl execute` process through the campaign graph, runtime guard, preflight and safety controller (the dashboard
+  itself injects nothing). *Pick another fault* re-plans without that fault.
+- **Agent 2, always on.** A watcher in the dashboard checks every service each second; when one stays Down or Degraded
+  for 3 s it starts a blind investigation on its own: Mistral picks read-only tools one step at a time (pod status,
+  events, service logs, queue, client SLIs, database, downstream probe, dependency map, the detectors), each step
+  streams to the page, then it writes a root cause, failure chain and playbook-only fixes (findings must cite its own
+  tool calls). It never reads the plan, the journal or Chaos Mesh objects. Records: `state/incidents/` and
+  `reports/<run-id>/investigations/`. When a run's evidence bundle appears, it also runs the graded evidence
+  diagnosis and the fix summary, so Acts 3-4 fill in without a command. *Investigate now* asks it by hand.
+- **Kill switch** (header): same as `chaosctl kill` (./KILL, delete all chaos, wait for every service Ready);
+  *Reset kill switch* = `chaosctl recover`. **Steady traffic** gives Agent 2 client signals between runs.
+- Every write is a POST with an `X-Chaosctl: 1` header (another web page cannot send it); the server listens on
+  127.0.0.1 only. Fixes are still advisory: nothing applies them.
 Works offline (no CDN; charts are our own SVG). Pick a run in the header: **LIVE** follows the cluster, any finished
 run is **REPLAYED** from `reports/<run-id>/` + `state/loadgen.sqlite` with a scrubber (1x / 4x / 10x), so the demo
 video needs no cluster. `chaosctl dashboard --replay <run-id>` opens straight on that run; `?run=<run-id>/<exp>` in

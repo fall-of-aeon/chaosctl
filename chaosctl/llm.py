@@ -53,6 +53,10 @@ class _Budget:
             raise LLMUnavailable(f"call budget of {self.limit} exhausted")
         self.used += 1
 
+    def allow(self, n: int) -> None:
+        """Long-lived processes (the dashboard's Agent 2 watcher): grant n more calls for one bounded task."""
+        self.limit = max(self.limit, self.used + n)
+
 
 budget = _Budget()
 

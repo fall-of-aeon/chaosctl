@@ -110,6 +110,7 @@ class Hub(threading.Thread):
         self.state: dict = {"mode": src.mode, "collected_at": None}
         self.components: dict = {"nodes": {}, "platform": {}}
         self.started = time.time()
+        self.extras = None   # callable -> dict merged into every stream message (agent controls, set by the server)
 
     # ---------------------------------------------------------------- loop
     def run(self) -> None:
@@ -220,9 +221,15 @@ class Hub(threading.Thread):
             self.prev_pods = pods
             self.versions["experiment"] = f"{(exp or last or {}).get('run_id')}:{(exp or last or {}).get('id')}:{ctx.get('exp_files')}"
             self.versions["agent1"] = ctx.get("agent1_key", "")
-            payload = json.dumps({"state": state, "components": comps, "point": point, "versions": dict(self.versions),
-                                  "events_tail": events[-30:]}, default=str)
+            msg = {"state": state, "components": comps, "point": point, "versions": dict(self.versions),
+                   "events_tail": events[-30:]}
             subs = list(self.subscribers)
+        if self.extras:
+            try:
+                msg.update(self.extras())
+            except Exception as exc:  # the agents panel says so; the stream keeps going
+                msg["extras_error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+        payload = json.dumps(msg, default=str)
         for q in subs:
             try:
                 q.put_nowait(payload)

@@ -297,6 +297,43 @@ def demo(queue_abort: int = typer.Option(None, help="strict queue limit to show 
     diagnose(run=runner.run_id, exp=res["exp_id"], llm=llm, pace=0.8)
 
 
+@app.command("execute", hidden=True)
+def execute(proposal: Path = typer.Option(..., help="proposal JSON written by the dashboard on Approve"),
+            run_id: str = typer.Option(..., "--run-id")):
+    """Run ONE experiment a human approved in the dashboard, exactly as approved (no re-planning), under the
+    safety controller. The runtime guard and preflight still re-check it. Agent 2 (the dashboard's watcher)
+    diagnoses the evidence when it appears."""
+    from chaosctl.agents.campaign import build_campaign
+    from chaosctl.runner import Runner, load_policy
+
+    p = json.loads(proposal.read_text())
+    runner = Runner(run_id=run_id)
+    # Agent 1's planning events, so this run's Story shows the decision it was approved from
+    for e in p.get("planning_events") or []:
+        runner.journal.write({k: v for k, v in e.items() if k != "ts"} | {"planned_at": e.get("ts")})
+    runner.start_safety()
+    camp = build_campaign(runner, _live_graph, load_policy(), runner.journal)
+    console.print(f"run id {runner.run_id}: approved {p['item']['fault']} -> {p['item']['target']} ({p['item']['rung']})")
+    try:
+        state = camp.invoke({"only": None, "max_experiments": 1, "use_llm": True,
+                             "preplanned": {k: p[k] for k in ("item", "verdict", "source", "proposal_id") if k in p}},
+                            {"recursion_limit": 50})
+    finally:
+        runner.loadgen.stop()
+        runner.ctl.stop()
+    (runner.dir / "results.json").write_text(json.dumps(state.get("results", []), indent=2, default=str))
+    res = (state.get("results") or [None])[0]
+    if not res:
+        console.print("[red]Nothing ran.[/red]")
+        raise typer.Exit(1)
+    console.print(f"{res['exp_id']} {res['fault']} -> {res['target']}: {res['status']}")
+    for k in ("skip_reason", "problems", "abort_reason", "recovery_time_s", "manual_action_needed"):
+        if res.get(k) is not None:
+            console.print(f"  {k}: {res[k]}")
+    if res.get("fates"):
+        console.print(f"  in-flight orders: {res['fates']['summary']}")
+
+
 @app.command("ks-hold", hidden=True)
 def ks_hold(run_id: str = typer.Option(...), hold_s: int = 60):
     """Child process for killswitch-test: inject reversible pod_failure on the worker and wait under the controller."""
@@ -383,7 +420,7 @@ def killswitch_test(via: list[str] = typer.Option(["cli", "file", "signal"]), re
 @app.command()
 def dashboard(port: int = 8787,
               replay: str = typer.Option(None, help="serve a recorded run from reports/<run-id>/ instead of live data")):
-    """Live impact dashboard (open http://127.0.0.1:8787 next to the terminal). Read-only."""
+    """Live dashboard (open http://127.0.0.1:8787): Agent 1 on a button with human approval, Agent 2 always watching."""
     from chaosctl.dash.server import serve
 
     serve(port, replay)
